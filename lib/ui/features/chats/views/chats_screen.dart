@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ogneva_msg_app/data/repositories/chat_repository.dart';
+import 'package:ogneva_msg_app/data/services/realtime_service.dart';
 import 'package:ogneva_msg_app/domain/models/conversation.dart';
 import 'package:ogneva_msg_app/ui/core/theme/app_colors.dart';
 import 'package:ogneva_msg_app/ui/core/widgets/app_chip.dart';
 import 'package:ogneva_msg_app/ui/core/widgets/app_surface.dart';
 import 'package:ogneva_msg_app/ui/core/widgets/brand_avatar.dart';
+import 'package:ogneva_msg_app/ui/features/chats/view_models/chats_view_model.dart';
 import 'package:provider/provider.dart';
 
 class ChatsScreen extends StatelessWidget {
@@ -13,8 +15,21 @@ class ChatsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final conversations = context.read<ChatRepository>().listConversations();
+    return ChangeNotifierProvider(
+      create: (context) => ChatsViewModel(
+        chatRepository: context.read<ChatRepository>(),
+        realtimeService: context.read<RealtimeService>(),
+      )..load(),
+      child: const _ChatsContent(),
+    );
+  }
+}
 
+class _ChatsContent extends StatelessWidget {
+  const _ChatsContent();
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       floatingActionButton: FloatingActionButton(
         onPressed: () {},
@@ -49,54 +64,112 @@ class ChatsScreen extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: 18),
-                  const SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        AppChip(label: 'Все', selected: true),
-                        SizedBox(width: 8),
-                        AppChip(label: 'Непрочитанные', count: 12),
-                        SizedBox(width: 8),
-                        AppChip(label: 'Архив'),
-                      ],
-                    ),
+                  Consumer<ChatsViewModel>(
+                    builder: (context, viewModel, _) {
+                      return SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            const AppChip(label: 'Все', selected: true),
+                            const SizedBox(width: 8),
+                            AppChip(
+                              label: 'Непрочитанные',
+                              count: viewModel.totalUnreadCount,
+                            ),
+                            const SizedBox(width: 8),
+                            const AppChip(label: 'Архив'),
+                          ],
+                        ),
+                      );
+                    },
                   ),
                   const SizedBox(height: 16),
-                  const Row(
-                    children: [
-                      Icon(
-                        Icons.mark_chat_unread_outlined,
-                        color: AppColors.primaryBlue,
-                        size: 18,
-                      ),
-                      SizedBox(width: 8),
-                      Text(
-                        '12 непрочитанных',
-                        style: TextStyle(
-                          color: AppColors.text,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      Spacer(),
-                      _OnlineStatus(),
-                    ],
+                  Consumer<ChatsViewModel>(
+                    builder: (context, viewModel, _) {
+                      return Row(
+                        children: [
+                          const Icon(
+                            Icons.mark_chat_unread_outlined,
+                            color: AppColors.primaryBlue,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${viewModel.totalUnreadCount} непрочитанных',
+                            style: const TextStyle(
+                              color: AppColors.text,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const Spacer(),
+                          const _OnlineStatus(),
+                        ],
+                      );
+                    },
                   ),
                   const SizedBox(height: 16),
                   Expanded(
-                    child: AppSurface(
-                      child: ListView.separated(
-                        padding: EdgeInsets.zero,
-                        itemCount: conversations.length,
-                        separatorBuilder: (_, _) => const Divider(indent: 76),
-                        itemBuilder: (context, index) {
-                          return _ConversationRow(
-                            conversation: conversations[index],
-                            onTap: () => context.push(
-                              '/chat/${conversations[index].id}',
+                    child: Consumer<ChatsViewModel>(
+                      builder: (context, viewModel, _) {
+                        if (viewModel.isLoading) {
+                          return const _StateSurface(
+                            child: CircularProgressIndicator(
+                              color: AppColors.primaryBlue,
                             ),
                           );
-                        },
-                      ),
+                        }
+                        if (viewModel.errorMessage != null) {
+                          return _StateSurface(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  viewModel.errorMessage!,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: AppColors.mutedText,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                FilledButton.icon(
+                                  onPressed: viewModel.load,
+                                  icon: const Icon(Icons.refresh_rounded),
+                                  label: const Text('Повторить'),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                        final conversations = viewModel.conversations;
+                        if (conversations.isEmpty) {
+                          return const _StateSurface(
+                            child: Text(
+                              'Чатов пока нет',
+                              style: TextStyle(
+                                color: AppColors.mutedText,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          );
+                        }
+                        return AppSurface(
+                          child: ListView.separated(
+                            padding: EdgeInsets.zero,
+                            itemCount: conversations.length,
+                            separatorBuilder: (_, _) =>
+                                const Divider(indent: 76),
+                            itemBuilder: (context, index) {
+                              return _ConversationRow(
+                                conversation: conversations[index],
+                                onTap: () => context.push(
+                                  '/chat/${conversations[index].id}',
+                                ),
+                              );
+                            },
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ],
@@ -104,6 +177,21 @@ class ChatsScreen extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _StateSurface extends StatelessWidget {
+  const _StateSurface({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppSurface(
+      child: Center(
+        child: Padding(padding: const EdgeInsets.all(24), child: child),
       ),
     );
   }

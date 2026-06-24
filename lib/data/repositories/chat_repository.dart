@@ -1,164 +1,350 @@
+import 'package:ogneva_msg_app/data/models/messenger_dtos.dart';
+import 'package:ogneva_msg_app/data/repositories/auth_repository.dart';
+import 'package:ogneva_msg_app/data/services/messenger_api_client.dart';
 import 'package:ogneva_msg_app/domain/models/conversation.dart';
 import 'package:ogneva_msg_app/domain/models/message.dart';
 
-abstract class ChatRepository {
-  List<Conversation> listConversations();
-  Conversation conversationById(String id);
-  List<TopicInfo> listTopics(String conversationId);
-  List<ChatMessage> listMessages(String conversationId);
-  ChatMessage rootMessageForThread(String threadId);
-  List<ChatMessage> listThreadReplies(String threadId);
+class ConversationPage {
+  const ConversationPage({required this.items, this.nextCursor});
+
+  final List<Conversation> items;
+  final String? nextCursor;
 }
 
-class MockChatRepository implements ChatRepository {
-  static const _conversations = [
-    Conversation(
-      id: 'ege-inf-2026',
-      type: 'group',
-      title: 'ЕГЭ Информатика 2026',
-      topicTitle: 'Домашка',
-      lastMessageSender: 'Мария',
-      lastMessagePreview: 'Ребята, не забудьте сдать ДЗ до пятницы.',
-      lastMessageTime: '14:32',
-      unreadCount: 5,
-    ),
-    Conversation(
-      id: 'course-support',
-      type: 'support',
-      title: 'Поддержка курса',
-      topicTitle: 'Вопросы',
-      lastMessageSender: 'Администратор',
-      lastMessagePreview: 'Проверили доступ, теперь все должно открываться.',
-      lastMessageTime: '13:08',
-      unreadCount: 1,
-    ),
-    Conversation(
-      id: 'anna-direct',
-      type: 'direct',
-      title: 'Анна Иванова',
-      topicTitle: 'Общий',
-      lastMessageSender: 'Анна',
-      lastMessagePreview: 'Спасибо, я посмотрю разбор сегодня вечером.',
-      lastMessageTime: '12:20',
-      unreadCount: 0,
-      isOnline: true,
-    ),
-    Conversation(
-      id: 'python-start',
-      type: 'group',
-      title: 'Python Start',
-      topicTitle: 'Общий',
-      lastMessageSender: 'Иван',
-      lastMessagePreview: 'А можно пример с циклами еще раз?',
-      lastMessageTime: '11:42',
-      unreadCount: 2,
-      isMuted: true,
-    ),
-    Conversation(
-      id: 'parents-10',
-      type: 'group',
-      title: 'Родители · 10 класс',
-      topicTitle: 'Общий',
-      lastMessageSender: 'Куратор',
-      lastMessagePreview: 'Расписание на следующую неделю закрепили.',
-      lastMessageTime: 'вчера',
-      unreadCount: 0,
-    ),
-  ];
+class ConversationDetail {
+  const ConversationDetail({required this.conversation, required this.topics});
 
-  static const _topics = [
-    TopicInfo(id: 'general', title: 'Общий', unreadCount: 0),
-    TopicInfo(id: 'homework', title: 'Домашка', unreadCount: 5),
-    TopicInfo(id: 'questions', title: 'Вопросы', unreadCount: 2),
-  ];
+  final Conversation conversation;
+  final List<TopicInfo> topics;
+}
 
-  static const _messages = [
-    ChatMessage(
-      id: 'm1',
-      senderName: 'Мария',
-      body: 'Ребята, не забудьте сдать ДЗ до пятницы.',
-      time: '14:26',
-      isMine: false,
-      threadId: 'thread-homework',
-      threadReplyCount: 3,
-    ),
-    ChatMessage(
-      id: 'm2',
-      senderName: 'Иван',
-      body: 'Я почти закончил, только не понял вторую задачу.',
-      time: '14:27',
-      isMine: false,
-    ),
-    ChatMessage(
-      id: 'divider',
-      senderName: '',
-      body: 'Новые сообщения',
-      time: '',
-      isMine: false,
-      isUnreadDivider: true,
-    ),
-    ChatMessage(
-      id: 'm3',
-      senderName: 'Вы',
-      body: 'Я отправлю решение вечером. Можно будет уточнить по графам?',
-      time: '14:30',
-      isMine: true,
-      readLabel: 'Прочитано',
-    ),
-    ChatMessage(
-      id: 'm4',
-      senderName: 'Мария',
-      body: 'Да, конечно. Пишите вопросы прямо в этой теме.',
-      time: '14:32',
-      isMine: false,
-    ),
-  ];
+class MessagePage {
+  const MessagePage({required this.items, this.nextCursor});
 
-  static const _threadReplies = [
-    ChatMessage(
-      id: 'r1',
-      senderName: 'Иван',
-      body: 'Я правильно понял, что нужно приложить только код?',
-      time: '14:28',
-      isMine: false,
-    ),
-    ChatMessage(
-      id: 'r2',
-      senderName: 'Вы',
-      body: 'Я еще добавлю короткое объяснение решения.',
-      time: '14:30',
-      isMine: true,
-      readLabel: 'Прочитано',
-    ),
-    ChatMessage(
-      id: 'r3',
-      senderName: 'Преподаватель',
-      body: 'Да, код и два-три предложения с идеей алгоритма.',
-      time: '14:34',
-      isMine: false,
-    ),
-  ];
+  final List<ChatMessage> items;
+  final String? nextCursor;
+}
+
+abstract class ChatRepository {
+  Future<ConversationPage> listConversations({
+    String filter = 'all',
+    String? cursor,
+  });
+
+  Future<ConversationDetail> loadConversation(String conversationId);
+
+  Future<MessagePage> listMessages(String topicId, {String? cursor});
+
+  Future<MessagePage> listThreadMessages(String threadId);
+
+  Future<ChatMessage> sendTopicMessage({
+    required String topicId,
+    required String clientMessageId,
+    required String body,
+  });
+
+  Future<ChatMessage> sendThreadMessage({
+    required String threadId,
+    required String clientMessageId,
+    required String body,
+  });
+
+  Future<ThreadInfo> createThread(String rootMessageId);
+
+  Future<void> markTopicRead({
+    required String topicId,
+    required int lastReadSeq,
+  });
+
+  Future<void> sendTyping({required String topicId, required bool isTyping});
+
+  ChatMessage? cachedRootMessageForThread(String threadId);
+
+  ChatMessage messageFromRealtimeJson(Map<String, dynamic> json);
+}
+
+class ApiChatRepository implements ChatRepository {
+  ApiChatRepository({
+    required MessengerApiClient apiClient,
+    required AuthRepository authRepository,
+  }) : _apiClient = apiClient,
+       _authRepository = authRepository;
+
+  final MessengerApiClient _apiClient;
+  final AuthRepository _authRepository;
+  final Map<String, Map<String, String>> _displayNamesByConversation = {};
+  final Map<String, ChatMessage> _rootMessagesByThreadId = {};
 
   @override
-  List<Conversation> listConversations() => _conversations;
-
-  @override
-  Conversation conversationById(String id) {
-    return _conversations.firstWhere(
-      (conversation) => conversation.id == id,
-      orElse: () => _conversations.first,
+  Future<ConversationPage> listConversations({
+    String filter = 'all',
+    String? cursor,
+  }) async {
+    final response = await _authorized(
+      (token) => _apiClient.getJson(
+        '/conversations',
+        accessToken: token,
+        query: {'limit': '30', 'filter': filter, 'cursor': cursor},
+      ),
+    );
+    final page = ApiListResponse.fromJson(response, ApiConversation.fromJson);
+    return ConversationPage(
+      items: page.items.map(_conversationFromApi).toList(),
+      nextCursor: page.nextCursor,
     );
   }
 
   @override
-  List<TopicInfo> listTopics(String conversationId) => _topics;
+  Future<ConversationDetail> loadConversation(String conversationId) async {
+    final response = await _authorized(
+      (token) => _apiClient.getJson(
+        '/conversations/$conversationId',
+        accessToken: token,
+      ),
+    );
+    final apiConversation = ApiConversation.fromJson(response);
+    _cacheMembers(apiConversation);
+    return ConversationDetail(
+      conversation: _conversationFromApi(apiConversation),
+      topics: apiConversation.topics.map(_topicFromApi).toList(),
+    );
+  }
 
   @override
-  List<ChatMessage> listMessages(String conversationId) => _messages;
+  Future<MessagePage> listMessages(String topicId, {String? cursor}) async {
+    final response = await _authorized(
+      (token) => _apiClient.getJson(
+        '/topics/$topicId/messages',
+        accessToken: token,
+        query: {'limit': '50', 'cursor': cursor},
+      ),
+    );
+    final page = ApiListResponse.fromJson(response, ApiMessage.fromJson);
+    final messages = page.items.map(_messageFromApi).toList();
+    _cacheRootMessages(messages);
+    return MessagePage(items: messages, nextCursor: page.nextCursor);
+  }
 
   @override
-  ChatMessage rootMessageForThread(String threadId) => _messages.first;
+  Future<MessagePage> listThreadMessages(String threadId) async {
+    final response = await _authorized(
+      (token) =>
+          _apiClient.getJson('/threads/$threadId/messages', accessToken: token),
+    );
+    final page = ApiListResponse.fromJson(response, ApiMessage.fromJson);
+    return MessagePage(
+      items: page.items.map(_messageFromApi).toList(),
+      nextCursor: page.nextCursor,
+    );
+  }
 
   @override
-  List<ChatMessage> listThreadReplies(String threadId) => _threadReplies;
+  Future<ChatMessage> sendTopicMessage({
+    required String topicId,
+    required String clientMessageId,
+    required String body,
+  }) async {
+    final response = await _authorized(
+      (token) => _apiClient.postJson(
+        '/topics/$topicId/messages',
+        accessToken: token,
+        body: {'client_message_id': clientMessageId, 'body': body.trim()},
+      ),
+    );
+    final message = _messageFromApi(ApiMessage.fromJson(response));
+    _cacheRootMessages([message]);
+    return message;
+  }
+
+  @override
+  Future<ChatMessage> sendThreadMessage({
+    required String threadId,
+    required String clientMessageId,
+    required String body,
+  }) async {
+    final response = await _authorized(
+      (token) => _apiClient.postJson(
+        '/threads/$threadId/messages',
+        accessToken: token,
+        body: {'client_message_id': clientMessageId, 'body': body.trim()},
+      ),
+    );
+    return _messageFromApi(ApiMessage.fromJson(response));
+  }
+
+  @override
+  Future<ThreadInfo> createThread(String rootMessageId) async {
+    final response = await _authorized(
+      (token) => _apiClient.postJson(
+        '/messages/$rootMessageId/thread',
+        accessToken: token,
+      ),
+    );
+    return _threadFromApi(ApiThread.fromJson(response));
+  }
+
+  @override
+  Future<void> markTopicRead({
+    required String topicId,
+    required int lastReadSeq,
+  }) async {
+    await _authorized(
+      (token) => _apiClient.postVoid(
+        '/topics/$topicId/read',
+        accessToken: token,
+        body: {'last_read_seq': lastReadSeq},
+      ),
+    );
+  }
+
+  @override
+  Future<void> sendTyping({
+    required String topicId,
+    required bool isTyping,
+  }) async {
+    await _authorized(
+      (token) => _apiClient.postVoid(
+        '/topics/$topicId/typing',
+        accessToken: token,
+        body: {'state': isTyping ? 'started' : 'stopped'},
+      ),
+    );
+  }
+
+  @override
+  ChatMessage? cachedRootMessageForThread(String threadId) {
+    return _rootMessagesByThreadId[threadId];
+  }
+
+  @override
+  ChatMessage messageFromRealtimeJson(Map<String, dynamic> json) {
+    final message = _messageFromApi(ApiMessage.fromJson(json));
+    _cacheRootMessages([message]);
+    return message;
+  }
+
+  Future<T> _authorized<T>(Future<T> Function(String token) request) async {
+    final token = await _authRepository.requireAccessToken();
+    try {
+      return await request(token);
+    } on ApiUnauthorizedException {
+      final refreshedToken = await _authRepository.refreshAccessToken();
+      return request(refreshedToken);
+    }
+  }
+
+  void _cacheMembers(ApiConversation conversation) {
+    _displayNamesByConversation[conversation.id] = {
+      for (final member in conversation.members)
+        member.userId: member.displayName,
+    };
+  }
+
+  void _cacheRootMessages(List<ChatMessage> messages) {
+    for (final message in messages) {
+      if (message.threadId != null && message.threadReplyCount > 0) {
+        _rootMessagesByThreadId[message.threadId!] = message;
+      }
+    }
+  }
+
+  Conversation _conversationFromApi(ApiConversation conversation) {
+    final lastMessage = conversation.lastMessage;
+    final senderName = lastMessage == null
+        ? ''
+        : _senderName(lastMessage.conversationId, lastMessage.senderId);
+    return Conversation(
+      id: conversation.id,
+      type: conversation.type,
+      title: conversation.title?.trim().isNotEmpty == true
+          ? conversation.title!.trim()
+          : _fallbackConversationTitle(conversation.type),
+      topicTitle: 'Общий',
+      lastMessageSender: senderName,
+      lastMessagePreview: lastMessage == null
+          ? 'Сообщений пока нет'
+          : lastMessage.deletedAt == null
+          ? lastMessage.body
+          : 'Сообщение удалено',
+      lastMessageTime: lastMessage == null
+          ? ''
+          : _formatTime(lastMessage.createdAt),
+      unreadCount: conversation.unreadCount,
+      status: conversation.status,
+      defaultTopicId: conversation.defaultTopicId,
+      lastMessageTopicId: lastMessage?.topicId,
+      createdAt: conversation.createdAt,
+    );
+  }
+
+  TopicInfo _topicFromApi(ApiTopic topic) {
+    return TopicInfo(
+      id: topic.id,
+      title: topic.title,
+      unreadCount: topic.unreadCount,
+      conversationId: topic.conversationId,
+      kind: topic.kind,
+      isArchived: topic.isArchived,
+      lastSeq: topic.lastSeq,
+      lastReadSeq: topic.lastReadSeq,
+    );
+  }
+
+  ChatMessage _messageFromApi(ApiMessage message) {
+    final thread = message.thread;
+    final threadReplyCount = thread?.messageCount ?? 0;
+    return ChatMessage(
+      id: message.id,
+      conversationId: message.conversationId,
+      topicId: message.topicId,
+      seq: message.seq,
+      senderId: message.senderId,
+      senderName: _senderName(message.conversationId, message.senderId),
+      body: message.deletedAt == null ? message.body : 'Сообщение удалено',
+      time: _formatTime(message.createdAt),
+      isMine: message.senderId == _authRepository.currentUser?.id,
+      clientMessageId: message.clientMessageId,
+      createdAt: message.createdAt,
+      editedAt: message.editedAt,
+      deletedAt: message.deletedAt,
+      threadId: thread?.id ?? message.threadId,
+      threadReplyCount: threadReplyCount,
+      readLabel: message.senderId == _authRepository.currentUser?.id
+          ? 'Отправлено'
+          : null,
+    );
+  }
+
+  ThreadInfo _threadFromApi(ApiThread thread) {
+    return ThreadInfo(
+      id: thread.id,
+      topicId: thread.topicId,
+      rootMessageId: thread.rootMessageId,
+      messageCount: thread.messageCount,
+      lastMessageAt: thread.lastMessageAt,
+      createdAt: thread.createdAt,
+    );
+  }
+
+  String _senderName(String conversationId, String senderId) {
+    if (senderId == _authRepository.currentUser?.id) {
+      return 'Вы';
+    }
+    return _displayNamesByConversation[conversationId]?[senderId] ?? 'Участник';
+  }
+
+  String _fallbackConversationTitle(String type) {
+    return switch (type) {
+      'direct' => 'Личный чат',
+      'support' => 'Поддержка',
+      _ => 'Групповой чат',
+    };
+  }
+
+  String _formatTime(DateTime dateTime) {
+    final local = dateTime.toLocal();
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
 }

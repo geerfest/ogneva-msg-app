@@ -13,6 +13,7 @@ class ProfileScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final session = context.watch<AppSession>();
     final user = session.currentUser;
+    final roleLabel = _roleLabel(user?.role);
 
     return Scaffold(
       body: SafeArea(
@@ -63,8 +64,8 @@ class ProfileScreen extends StatelessWidget {
                               color: AppColors.warmSurface,
                               borderRadius: BorderRadius.circular(999),
                             ),
-                            child: const Text(
-                              'Ученик',
+                            child: Text(
+                              roleLabel,
                               style: TextStyle(
                                 color: AppColors.primaryBlueDark,
                                 fontWeight: FontWeight.w800,
@@ -111,10 +112,10 @@ class ProfileScreen extends StatelessWidget {
                         value: user?.phone ?? 'Не указан',
                       ),
                       const Divider(indent: 56),
-                      const _ProfileRow(
+                      _ProfileRow(
                         icon: Icons.badge_outlined,
                         label: 'Роль',
-                        value: 'Ученик',
+                        value: roleLabel,
                       ),
                     ],
                   ),
@@ -145,8 +146,11 @@ class ProfileScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 24),
                 OutlinedButton.icon(
-                  onPressed: () {
-                    session.signOut();
+                  onPressed: () async {
+                    await session.signOut();
+                    if (!context.mounted) {
+                      return;
+                    }
                     context.go('/login');
                   },
                   style: OutlinedButton.styleFrom(
@@ -176,6 +180,18 @@ class ProfileScreen extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _roleLabel(String? role) {
+    return switch (role) {
+      'owner' => 'Владелец',
+      'admin' => 'Администратор',
+      'staff' => 'Сотрудник',
+      'teacher' => 'Преподаватель',
+      'parent' => 'Родитель',
+      'client' => 'Клиент',
+      _ => 'Ученик',
+    };
   }
 }
 
