@@ -1,9 +1,9 @@
 # Ogneva Messenger App
 
-Flutter-клиент мессенджера для учебного центра Ogneva. Приложение будет работать с backend-репозиторием
+Flutter-клиент мессенджера для учебного центра Ogneva. Приложение работает с backend-репозиторием
 [geerfest/ogneva-msg](https://github.com/geerfest/ogneva-msg).
 
-Сейчас это первый экранный MVP: навигация, дизайн-система, моковые данные и базовые пользовательские сценарии уже собраны. Подключение к реальному API вынесено следующим этапом: `MessengerApiClient` и конфигурация base URL уже есть, но auth/chats пока используют mock-репозитории.
+Клиент подключен к live MVP backend: auth, secure token persistence, список чатов, темы, сообщения, треды, отправка сообщений и Centrifugo realtime-события идут через data-layer. Runtime mock-режима в приложении нет; тесты используют явно инжектированные fakes.
 
 ## Что Уже Есть
 
@@ -12,10 +12,12 @@ Flutter-клиент мессенджера для учебного центра
 - Экран чата с топиками, сообщениями, unread-разделителем, typing indicator и composer.
 - Экран ветки ответов.
 - Экран профиля и настроек пользователя.
+- Auto-restore сессии через refresh token.
+- REST-интеграция с `ogneva-msg` для auth/chats/topics/messages/threads.
+- Centrifugo realtime-подписки на user/conversation/topic/thread события.
 - Декларативная навигация через `go_router`.
 - Простая архитектура `ui / domain / data`.
-- Widget-тесты для входа и перехода в тред.
-- Подготовленный HTTP-клиент для backend API.
+- Widget- и unit-тесты для auth, API parsing, realtime reducer и ключевых экранов.
 
 ## Стек
 
@@ -24,14 +26,15 @@ Flutter-клиент мессенджера для учебного центра
 - `go_router` для навигации
 - `provider` для простого DI и session state
 - `http` для REST API
-- `flutter_secure_storage` для будущего хранения токенов
+- `flutter_secure_storage` для хранения access/refresh token
+- `centrifuge` для Centrifugo realtime
 
 ## Требования
 
 - Flutter SDK, совместимый с Dart `^3.11.5`
 - Xcode и iOS Simulator для запуска на iOS
 - Android Studio / Android SDK для запуска на Android
-- Локальный backend `ogneva-msg`, когда понадобится проверять реальный API
+- Локальный backend `ogneva-msg` для live run/smoke
 
 Проверить окружение:
 
@@ -95,6 +98,31 @@ flutter run -d <android-emulator-id> \
 http://localhost:8080/api/v1
 ```
 
+## Локальный Backend
+
+Backend dev stack публикует API на `localhost:8080` и Centrifugo на `localhost:8000`.
+
+В backend-репозитории:
+
+```bash
+cd /Users/geerfest/projects/ogneva-msg
+docker compose -f deploy/docker-compose.yml up --build
+```
+
+Dev seed пользователи:
+
+```text
+admin@example.com / admin123
+teacher@example.com / user123
+student@example.com / user123
+```
+
+Для iOS Simulator backend `CENTRIFUGO_WS_URL` должен быть доступен как:
+
+```text
+ws://localhost:8000/connection/websocket
+```
+
 ## Проверки
 
 Форматирование:
@@ -128,8 +156,9 @@ flutter test
 ```text
 lib/
   data/
-    repositories/      # mock/live repositories and data access contracts
-    services/          # HTTP/API clients
+    models/            # backend DTO parsing
+    repositories/      # live repositories and data access contracts
+    services/          # HTTP, token storage, realtime
   domain/
     models/            # app domain models
   ui/
@@ -142,8 +171,9 @@ lib/
 - `lib/main.dart` - DI, тема, router и старт приложения.
 - `lib/ui/core/routing/app_router.dart` - карта маршрутов и auth redirect.
 - `lib/ui/core/theme/` - цветовые токены и Material theme.
-- `lib/data/repositories/` - текущие mock-репозитории.
-- `lib/data/services/messenger_api_client.dart` - заготовка API-клиента.
+- `lib/data/repositories/` - live auth/chat repositories.
+- `lib/data/services/messenger_api_client.dart` - REST API-клиент.
+- `lib/data/services/realtime_service.dart` - Centrifugo connection/subscriptions.
 
 ## Дизайн
 
@@ -169,13 +199,10 @@ lib/ui/core/theme/app_colors.dart
 login -> chats -> chat -> thread
 ```
 
-Пока данные моковые. Следующий большой этап - заменить `MockAuthRepository` и `MockChatRepository` на реализации поверх backend API `ogneva-msg`, добавить хранение токенов и обработку реальных ошибок сети.
+Данные берутся из live backend. При старте приложение пытается восстановить сессию через `/auth/refresh`; при logout очищает secure storage и отключает realtime.
 
 ## Ближайшие Задачи
 
-- Подключить реальный auth: login, refresh, me.
-- Подключить список чатов и сообщений из API.
-- Добавить хранение access/refresh token через `flutter_secure_storage`.
-- Добавить состояние загрузки, empty/error states и retry.
-- Добавить отправку сообщений.
-- Добавить интеграционные тесты ключевого сценария.
+- Проверить полный live сценарий на iOS Simulator с поднятым backend.
+- Добавить UI для создания чатов/тем, когда backend/product scope будет готов.
+- Добавить edit/delete UI и offline queue отдельными этапами.

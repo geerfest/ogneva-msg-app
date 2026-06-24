@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:ogneva_msg_app/data/repositories/auth_repository.dart';
+import 'package:ogneva_msg_app/data/services/messenger_api_client.dart';
 import 'package:ogneva_msg_app/domain/models/app_user.dart';
 
 class LoginViewModel extends ChangeNotifier {
@@ -25,6 +26,9 @@ class LoginViewModel extends ChangeNotifier {
     try {
       return await _authRepository.login(login: login, password: password);
     } on FormatException catch (error) {
+      _errorMessage = error.message;
+      return null;
+    } on ApiException catch (error) {
       _errorMessage = error.message;
       return null;
     } catch (_) {
