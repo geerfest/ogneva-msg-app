@@ -149,6 +149,9 @@ class _TopicStrip extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 20),
         itemBuilder: (context, index) {
+          if (index == viewModel.topics.length) {
+            return _CreateTopicButton(viewModel: viewModel);
+          }
           final topic = viewModel.topics[index];
           final selected = topic.id == viewModel.selectedTopic?.id;
           return Semantics(
@@ -167,7 +170,177 @@ class _TopicStrip extends StatelessWidget {
           );
         },
         separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemCount: viewModel.topics.length,
+        itemCount: viewModel.topics.length + 1,
+      ),
+    );
+  }
+}
+
+class _CreateTopicButton extends StatelessWidget {
+  const _CreateTopicButton({required this.viewModel});
+
+  final ChatViewModel viewModel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Создать тему',
+      child: Semantics(
+        button: true,
+        label: 'Создать тему',
+        child: InkWell(
+          onTap: viewModel.isCreatingTopic
+              ? null
+              : () => _showCreateTopicSheet(context, viewModel),
+          borderRadius: BorderRadius.circular(999),
+          child: Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: AppColors.primaryBlueSoft,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: AppColors.primaryBlueSoft),
+            ),
+            alignment: Alignment.center,
+            child: viewModel.isCreatingTopic
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.primaryBlue,
+                    ),
+                  )
+                : const Icon(
+                    Icons.add_rounded,
+                    color: AppColors.primaryBlue,
+                    size: 22,
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _showCreateTopicSheet(
+  BuildContext context,
+  ChatViewModel viewModel,
+) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (_) => ChangeNotifierProvider.value(
+      value: viewModel,
+      child: const _CreateTopicSheet(),
+    ),
+  );
+}
+
+class _CreateTopicSheet extends StatefulWidget {
+  const _CreateTopicSheet();
+
+  @override
+  State<_CreateTopicSheet> createState() => _CreateTopicSheetState();
+}
+
+class _CreateTopicSheetState extends State<_CreateTopicSheet> {
+  final _controller = TextEditingController();
+  bool _hasTitle = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _create() async {
+    final viewModel = context.read<ChatViewModel>();
+    if (!_hasTitle || viewModel.isCreatingTopic) {
+      return;
+    }
+    final created = await viewModel.createTopic(_controller.text);
+    if (!mounted || !created) {
+      return;
+    }
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final viewModel = context.watch<ChatViewModel>();
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20, 18, 20, 18 + bottomInset),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Новая тема',
+            style: TextStyle(
+              color: AppColors.text,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            maxLength: 120,
+            textInputAction: TextInputAction.done,
+            onChanged: (value) {
+              setState(() => _hasTitle = value.trim().isNotEmpty);
+            },
+            onSubmitted: (_) => _create(),
+            decoration: const InputDecoration(
+              labelText: 'Название темы',
+              counterText: '',
+            ),
+          ),
+          if (viewModel.errorMessage != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              viewModel.errorMessage!,
+              style: const TextStyle(
+                color: AppColors.danger,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              TextButton(
+                onPressed: viewModel.isCreatingTopic
+                    ? null
+                    : () => Navigator.of(context).pop(),
+                child: const Text('Отмена'),
+              ),
+              const Spacer(),
+              FilledButton.icon(
+                onPressed: _hasTitle && !viewModel.isCreatingTopic
+                    ? _create
+                    : null,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 44),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                ),
+                icon: viewModel.isCreatingTopic
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.add_rounded),
+                label: const Text('Создать'),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -217,8 +390,14 @@ class _MessagesPane extends StatelessWidget {
         final messageIndex = index - (viewModel.errorMessage == null ? 0 : 1);
         return _MessageRow(
           message: viewModel.messages[messageIndex],
-          onOpenThread: (threadId) =>
-              context.push('/chat/$conversationId/thread/$threadId'),
+          isOpeningThread: viewModel.isOpeningThread,
+          onOpenThread: (message) async {
+            final threadId = await viewModel.openOrCreateThread(message);
+            if (!context.mounted || threadId == null) {
+              return;
+            }
+            context.push('/chat/$conversationId/thread/$threadId');
+          },
         );
       },
     );
@@ -268,10 +447,15 @@ class _StateMessage extends StatelessWidget {
 }
 
 class _MessageRow extends StatelessWidget {
-  const _MessageRow({required this.message, required this.onOpenThread});
+  const _MessageRow({
+    required this.message,
+    required this.isOpeningThread,
+    required this.onOpenThread,
+  });
 
   final ChatMessage message;
-  final ValueChanged<String> onOpenThread;
+  final bool isOpeningThread;
+  final Future<void> Function(ChatMessage message) onOpenThread;
 
   @override
   Widget build(BuildContext context) {
@@ -288,7 +472,11 @@ class _MessageRow extends StatelessWidget {
     final maxWidth = (MediaQuery.sizeOf(context).width * 0.78)
         .clamp(260.0, 420.0)
         .toDouble();
-    final hasThread = message.threadId != null && message.threadReplyCount > 0;
+    final hasThread = message.threadId != null;
+    final canOpenThread = !message.isPending && !message.isFailed;
+    final threadLabel = hasThread
+        ? '${message.threadReplyCount} ответа'
+        : 'Ответить';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -301,7 +489,9 @@ class _MessageRow extends StatelessWidget {
               button: hasThread,
               label: hasThread ? 'Открыть ответы' : null,
               child: InkWell(
-                onTap: hasThread ? () => onOpenThread(message.threadId!) : null,
+                onTap: hasThread && canOpenThread
+                    ? () => onOpenThread(message)
+                    : null,
                 borderRadius: BorderRadius.circular(18),
                 child: Container(
                   padding: const EdgeInsets.all(14),
@@ -351,35 +541,42 @@ class _MessageRow extends StatelessWidget {
                           height: 1.32,
                         ),
                       ),
-                      if (hasThread) ...[
+                      if (canOpenThread) ...[
                         const SizedBox(height: 10),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppColors.primaryBlueSoft,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.forum_outlined,
-                                color: AppColors.primaryBlue,
-                                size: 16,
+                        Semantics(
+                          button: true,
+                          label: hasThread ? 'Открыть ответы' : 'Создать тред',
+                          child: TextButton.icon(
+                            onPressed: isOpeningThread
+                                ? null
+                                : () => onOpenThread(message),
+                            style: TextButton.styleFrom(
+                              minimumSize: const Size(0, 36),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
                               ),
-                              const SizedBox(width: 7),
-                              Text(
-                                '${message.threadReplyCount} ответа',
-                                style: const TextStyle(
-                                  color: AppColors.primaryBlueDark,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 12.5,
-                                ),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              backgroundColor: AppColors.primaryBlueSoft,
+                              foregroundColor: AppColors.primaryBlueDark,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
                               ),
-                            ],
+                            ),
+                            icon: Icon(
+                              hasThread
+                                  ? Icons.forum_outlined
+                                  : Icons.reply_rounded,
+                              color: AppColors.primaryBlue,
+                              size: 16,
+                            ),
+                            label: Text(
+                              threadLabel,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 12.5,
+                              ),
+                            ),
                           ),
                         ),
                       ],

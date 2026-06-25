@@ -51,12 +51,22 @@ abstract class ChatRepository {
 
   Future<ThreadInfo> createThread(String rootMessageId);
 
+  Future<TopicInfo> createTopic({
+    required String conversationId,
+    required String title,
+  });
+
   Future<void> markTopicRead({
     required String topicId,
     required int lastReadSeq,
   });
 
   Future<void> sendTyping({required String topicId, required bool isTyping});
+
+  void cacheRootMessageForThread({
+    required String threadId,
+    required ChatMessage message,
+  });
 
   ChatMessage? cachedRootMessageForThread(String threadId);
 
@@ -120,7 +130,7 @@ class ApiChatRepository implements ChatRepository {
       ),
     );
     final page = ApiListResponse.fromJson(response, ApiMessage.fromJson);
-    final messages = page.items.map(_messageFromApi).toList();
+    final messages = sortChatMessagesAscending(page.items.map(_messageFromApi));
     _cacheRootMessages(messages);
     return MessagePage(items: messages, nextCursor: page.nextCursor);
   }
@@ -132,10 +142,8 @@ class ApiChatRepository implements ChatRepository {
           _apiClient.getJson('/threads/$threadId/messages', accessToken: token),
     );
     final page = ApiListResponse.fromJson(response, ApiMessage.fromJson);
-    return MessagePage(
-      items: page.items.map(_messageFromApi).toList(),
-      nextCursor: page.nextCursor,
-    );
+    final messages = sortChatMessagesAscending(page.items.map(_messageFromApi));
+    return MessagePage(items: messages, nextCursor: page.nextCursor);
   }
 
   @override
@@ -184,6 +192,21 @@ class ApiChatRepository implements ChatRepository {
   }
 
   @override
+  Future<TopicInfo> createTopic({
+    required String conversationId,
+    required String title,
+  }) async {
+    final response = await _authorized(
+      (token) => _apiClient.postJson(
+        '/conversations/$conversationId/topics',
+        accessToken: token,
+        body: {'title': title.trim()},
+      ),
+    );
+    return _topicFromApi(ApiTopic.fromJson(response));
+  }
+
+  @override
   Future<void> markTopicRead({
     required String topicId,
     required int lastReadSeq,
@@ -209,6 +232,14 @@ class ApiChatRepository implements ChatRepository {
         body: {'state': isTyping ? 'started' : 'stopped'},
       ),
     );
+  }
+
+  @override
+  void cacheRootMessageForThread({
+    required String threadId,
+    required ChatMessage message,
+  }) {
+    _rootMessagesByThreadId[threadId] = message.copyWith(threadId: threadId);
   }
 
   @override
@@ -242,7 +273,7 @@ class ApiChatRepository implements ChatRepository {
 
   void _cacheRootMessages(List<ChatMessage> messages) {
     for (final message in messages) {
-      if (message.threadId != null && message.threadReplyCount > 0) {
+      if (message.threadId != null) {
         _rootMessagesByThreadId[message.threadId!] = message;
       }
     }

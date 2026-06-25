@@ -87,6 +87,34 @@ void main() {
     expect(chat.sentTopicMessages, contains('Новый вопрос'));
   });
 
+  testWidgets('chat screen renders older messages above newer messages', (
+    WidgetTester tester,
+  ) async {
+    final chat = _FakeChatRepository(messagesNewestFirst: true);
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(),
+        chatRepository: chat,
+        realtimeService: _FakeRealtimeService(),
+        restoreOnStart: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('login_button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ЕГЭ Информатика 2026'));
+    await tester.pumpAndSettle();
+
+    final olderTop = tester.getTopLeft(
+      find.text('Пишите вопросы прямо в теме.'),
+    );
+    final newerTop = tester.getTopLeft(find.text('Спасибо!'));
+
+    expect(olderTop.dy, lessThan(newerTop.dy));
+  });
+
   testWidgets('chat screen opens a thread and sends a reply', (
     WidgetTester tester,
   ) async {
@@ -117,6 +145,66 @@ void main() {
     expect(find.text('Ответы'), findsOneWidget);
     expect(find.text('Ответ в тред'), findsOneWidget);
     expect(chat.sentThreadMessages, contains('Ответ в тред'));
+  });
+
+  testWidgets('chat screen creates a thread from a root message', (
+    WidgetTester tester,
+  ) async {
+    final chat = _FakeChatRepository(hasExistingThread: false);
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(),
+        chatRepository: chat,
+        realtimeService: _FakeRealtimeService(),
+        restoreOnStart: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('login_button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ЕГЭ Информатика 2026'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Ответить').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ответы'), findsOneWidget);
+    expect(find.text('Пишите вопросы прямо в теме.'), findsOneWidget);
+    expect(chat.createdThreadRootIds, contains('message-1'));
+  });
+
+  testWidgets('chat screen creates and selects a topic', (
+    WidgetTester tester,
+  ) async {
+    final chat = _FakeChatRepository();
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(),
+        chatRepository: chat,
+        realtimeService: _FakeRealtimeService(),
+        restoreOnStart: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('login_button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ЕГЭ Информатика 2026'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Создать тему'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).last, 'Домашка');
+    await tester.pump();
+    await tester.tap(find.text('Создать'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Домашка'), findsOneWidget);
+    expect(find.text('Сообщений пока нет'), findsOneWidget);
+    expect(chat.createdTopicTitles, contains('Домашка'));
   });
 }
 
@@ -174,8 +262,17 @@ class _FakeAuthRepository implements AuthRepository {
 }
 
 class _FakeChatRepository implements ChatRepository {
+  _FakeChatRepository({
+    this.hasExistingThread = true,
+    this.messagesNewestFirst = false,
+  });
+
+  final bool hasExistingThread;
+  final bool messagesNewestFirst;
   final sentTopicMessages = <String>[];
   final sentThreadMessages = <String>[];
+  final createdThreadRootIds = <String>[];
+  final createdTopicTitles = <String>[];
   final _rootByThread = <String, ChatMessage>{};
 
   @override
@@ -230,25 +327,27 @@ class _FakeChatRepository implements ChatRepository {
       body: 'Пишите вопросы прямо в теме.',
       time: '14:32',
       isMine: false,
-      threadId: 'thread-1',
-      threadReplyCount: 2,
+      threadId: hasExistingThread ? 'thread-1' : null,
+      threadReplyCount: hasExistingThread ? 2 : 0,
       seq: 2,
+      createdAt: DateTime.utc(2026, 6, 23, 14, 32),
     );
-    _rootByThread['thread-1'] = root;
+    if (hasExistingThread) {
+      _rootByThread['thread-1'] = root;
+    }
+    final newerMessage = ChatMessage(
+      id: 'message-2',
+      conversationId: 'conversation-1',
+      topicId: 'topic-1',
+      senderName: 'Вы',
+      body: 'Спасибо!',
+      time: '14:33',
+      isMine: true,
+      seq: 3,
+      createdAt: DateTime.utc(2026, 6, 23, 14, 33),
+    );
     return MessagePage(
-      items: [
-        root,
-        const ChatMessage(
-          id: 'message-2',
-          conversationId: 'conversation-1',
-          topicId: 'topic-1',
-          senderName: 'Вы',
-          body: 'Спасибо!',
-          time: '14:33',
-          isMine: true,
-          seq: 3,
-        ),
-      ],
+      items: messagesNewestFirst ? [newerMessage, root] : [root, newerMessage],
     );
   }
 
@@ -310,11 +409,26 @@ class _FakeChatRepository implements ChatRepository {
 
   @override
   Future<ThreadInfo> createThread(String rootMessageId) async {
+    createdThreadRootIds.add(rootMessageId);
     return const ThreadInfo(
       id: 'thread-1',
       topicId: 'topic-1',
       rootMessageId: 'message-1',
       messageCount: 1,
+    );
+  }
+
+  @override
+  Future<TopicInfo> createTopic({
+    required String conversationId,
+    required String title,
+  }) async {
+    createdTopicTitles.add(title);
+    return TopicInfo(
+      id: 'topic-${createdTopicTitles.length + 1}',
+      conversationId: conversationId,
+      title: title,
+      unreadCount: 0,
     );
   }
 
@@ -329,6 +443,14 @@ class _FakeChatRepository implements ChatRepository {
     required String topicId,
     required bool isTyping,
   }) async {}
+
+  @override
+  void cacheRootMessageForThread({
+    required String threadId,
+    required ChatMessage message,
+  }) {
+    _rootByThread[threadId] = message.copyWith(threadId: threadId);
+  }
 
   @override
   ChatMessage? cachedRootMessageForThread(String threadId) {

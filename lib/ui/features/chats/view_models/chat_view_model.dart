@@ -35,6 +35,8 @@ class ChatViewModel extends ChangeNotifier {
 
   bool _isLoading = false;
   bool _isSending = false;
+  bool _isCreatingTopic = false;
+  bool _isOpeningThread = false;
   String? _errorMessage;
   String? _typingLabel;
   Conversation? _conversation;
@@ -45,6 +47,8 @@ class ChatViewModel extends ChangeNotifier {
 
   bool get isLoading => _isLoading;
   bool get isSending => _isSending;
+  bool get isCreatingTopic => _isCreatingTopic;
+  bool get isOpeningThread => _isOpeningThread;
   String? get errorMessage => _errorMessage;
   String? get typingLabel => _typingLabel;
   Conversation? get conversation => _conversation;
@@ -90,6 +94,41 @@ class ChatViewModel extends ChangeNotifier {
     notifyListeners();
     await _loadMessagesForSelectedTopic();
     notifyListeners();
+  }
+
+  Future<bool> createTopic(String rawTitle) async {
+    final title = rawTitle.trim();
+    if (title.isEmpty || title.length > 120 || _isCreatingTopic) {
+      return false;
+    }
+    _isCreatingTopic = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final topic = await _chatRepository.createTopic(
+        conversationId: _conversationId,
+        title: title,
+      );
+      _topics = [..._topics.where((item) => item.id != topic.id), topic];
+      _selectedTopic = topic;
+      _messages = const <ChatMessage>[];
+      _typingLabel = null;
+      unawaited(_realtimeService.subscribeTopic(topic.id));
+      return true;
+    } on SessionExpiredException {
+      _errorMessage = 'Сессия истекла. Войдите заново.';
+      return false;
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+      return false;
+    } catch (_) {
+      _errorMessage = 'Не получилось создать тему';
+      return false;
+    } finally {
+      _isCreatingTopic = false;
+      notifyListeners();
+    }
   }
 
   Future<bool> sendMessage(String rawBody) async {
@@ -139,6 +178,53 @@ class ChatViewModel extends ChangeNotifier {
     }
   }
 
+  Future<String?> openOrCreateThread(ChatMessage message) async {
+    final existingThreadId = message.threadId;
+    if (existingThreadId != null) {
+      _chatRepository.cacheRootMessageForThread(
+        threadId: existingThreadId,
+        message: message,
+      );
+      return existingThreadId;
+    }
+    if (_isOpeningThread || message.isPending || message.isFailed) {
+      return null;
+    }
+
+    _isOpeningThread = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final thread = await _chatRepository.createThread(message.id);
+      final replyCount = message.threadReplyCount > thread.messageCount
+          ? message.threadReplyCount
+          : thread.messageCount;
+      final updatedMessage = message.copyWith(
+        threadId: thread.id,
+        threadReplyCount: replyCount,
+      );
+      _chatRepository.cacheRootMessageForThread(
+        threadId: thread.id,
+        message: updatedMessage,
+      );
+      _upsertMessage(updatedMessage);
+      return thread.id;
+    } on SessionExpiredException {
+      _errorMessage = 'Сессия истекла. Войдите заново.';
+      return null;
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+      return null;
+    } catch (_) {
+      _errorMessage = 'Не получилось открыть тред';
+      return null;
+    } finally {
+      _isOpeningThread = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> handleComposerChanged(String text) async {
     final topic = _selectedTopic;
     if (topic == null) {
@@ -170,7 +256,7 @@ class ChatViewModel extends ChangeNotifier {
     }
     unawaited(_realtimeService.subscribeTopic(topic.id));
     final page = await _chatRepository.listMessages(topic.id);
-    _messages = page.items;
+    _messages = sortChatMessagesAscending(page.items);
     final maxSeq = _messages.fold<int>(
       topic.lastReadSeq,
       (max, message) => message.seq > max ? message.seq : max,
@@ -229,11 +315,11 @@ class ChatViewModel extends ChangeNotifier {
   void _upsertMessage(ChatMessage message) {
     final byId = _messages.indexWhere((item) => item.id == message.id);
     if (byId != -1) {
-      _messages = [
+      _messages = sortChatMessagesAscending([
         ..._messages.take(byId),
         message,
         ..._messages.skip(byId + 1),
-      ];
+      ]);
       return;
     }
     final byClientId = message.clientMessageId == null
@@ -242,14 +328,14 @@ class ChatViewModel extends ChangeNotifier {
             (item) => item.clientMessageId == message.clientMessageId,
           );
     if (byClientId != -1) {
-      _messages = [
+      _messages = sortChatMessagesAscending([
         ..._messages.take(byClientId),
         message,
         ..._messages.skip(byClientId + 1),
-      ];
+      ]);
       return;
     }
-    _messages = [..._messages, message];
+    _messages = sortChatMessagesAscending([..._messages, message]);
   }
 
   void _markFailed(String clientMessageId) {

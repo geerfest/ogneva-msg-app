@@ -174,6 +174,7 @@ lib/
 - `lib/data/repositories/` - live auth/chat repositories.
 - `lib/data/services/messenger_api_client.dart` - REST API-клиент.
 - `lib/data/services/realtime_service.dart` - Centrifugo connection/subscriptions.
+- `docs/OFFLINE_OUTBOX.md` - целевая архитектура локального кеша, outbox и retry.
 
 ## Дизайн
 
@@ -205,4 +206,4 @@ login -> chats -> chat -> thread
 
 - Проверить полный live сценарий на iOS Simulator с поднятым backend.
 - Добавить UI для создания чатов/тем, когда backend/product scope будет готов.
-- Добавить edit/delete UI и offline queue отдельными этапами.
+- Добавить edit/delete UI и offline queue по `docs/OFFLINE_OUTBOX.md`.

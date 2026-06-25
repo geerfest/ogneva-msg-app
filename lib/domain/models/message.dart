@@ -86,6 +86,39 @@ class ChatMessage {
   }
 }
 
+int compareChatMessagesAscending(ChatMessage left, ChatMessage right) {
+  if (identical(left, right)) {
+    return 0;
+  }
+
+  if (left.seq > 0 && right.seq > 0 && left.seq != right.seq) {
+    return left.seq.compareTo(right.seq);
+  }
+
+  final leftCreatedAt = left.createdAt;
+  final rightCreatedAt = right.createdAt;
+  if (leftCreatedAt != null && rightCreatedAt != null) {
+    final byCreatedAt = leftCreatedAt.compareTo(rightCreatedAt);
+    if (byCreatedAt != 0) {
+      return byCreatedAt;
+    }
+  } else if (leftCreatedAt != null) {
+    return -1;
+  } else if (rightCreatedAt != null) {
+    return 1;
+  }
+
+  if (left.seq != right.seq) {
+    return left.seq.compareTo(right.seq);
+  }
+
+  return left.id.compareTo(right.id);
+}
+
+List<ChatMessage> sortChatMessagesAscending(Iterable<ChatMessage> messages) {
+  return messages.toList()..sort(compareChatMessagesAscending);
+}
+
 class ThreadInfo {
   const ThreadInfo({
     required this.id,

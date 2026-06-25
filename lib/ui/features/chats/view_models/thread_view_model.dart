@@ -51,7 +51,7 @@ class ThreadViewModel extends ChangeNotifier {
       _rootMessage = _chatRepository.cachedRootMessageForThread(_threadId);
       unawaited(_realtimeService.subscribeThread(_threadId));
       final page = await _chatRepository.listThreadMessages(_threadId);
-      _replies = page.items;
+      _replies = sortChatMessagesAscending(page.items);
     } on SessionExpiredException {
       _errorMessage = 'Сессия истекла. Войдите заново.';
     } on ApiException catch (error) {
@@ -83,7 +83,7 @@ class ThreadViewModel extends ChangeNotifier {
       createdAt: DateTime.now(),
       isPending: true,
     );
-    _replies = [..._replies, pendingReply];
+    _replies = sortChatMessagesAscending([..._replies, pendingReply]);
     notifyListeners();
 
     try {
@@ -137,7 +137,11 @@ class ThreadViewModel extends ChangeNotifier {
   void _upsertReply(ChatMessage reply) {
     final byId = _replies.indexWhere((item) => item.id == reply.id);
     if (byId != -1) {
-      _replies = [..._replies.take(byId), reply, ..._replies.skip(byId + 1)];
+      _replies = sortChatMessagesAscending([
+        ..._replies.take(byId),
+        reply,
+        ..._replies.skip(byId + 1),
+      ]);
       return;
     }
     final byClientId = reply.clientMessageId == null
@@ -146,14 +150,14 @@ class ThreadViewModel extends ChangeNotifier {
             (item) => item.clientMessageId == reply.clientMessageId,
           );
     if (byClientId != -1) {
-      _replies = [
+      _replies = sortChatMessagesAscending([
         ..._replies.take(byClientId),
         reply,
         ..._replies.skip(byClientId + 1),
-      ];
+      ]);
       return;
     }
-    _replies = [..._replies, reply];
+    _replies = sortChatMessagesAscending([..._replies, reply]);
   }
 
   void _markFailed(String clientMessageId) {
