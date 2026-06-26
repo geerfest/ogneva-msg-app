@@ -12,6 +12,7 @@ import 'package:ogneva_msg_app/domain/models/contact.dart';
 import 'package:ogneva_msg_app/domain/models/conversation.dart';
 import 'package:ogneva_msg_app/domain/models/message.dart';
 import 'package:ogneva_msg_app/main.dart';
+import 'package:ogneva_msg_app/ui/core/widgets/app_chip.dart';
 
 void main() {
   testWidgets('auto-restore opens chats screen', (WidgetTester tester) async {
@@ -32,6 +33,205 @@ void main() {
 
     expect(find.text('Чаты'), findsOneWidget);
     expect(find.text('ЕГЭ Информатика 2026'), findsOneWidget);
+  });
+
+  testWidgets('chats filters send backend filter and update selected chip', (
+    WidgetTester tester,
+  ) async {
+    final chat = _FakeChatRepository(
+      conversationPagesByFilter: {
+        'all': [
+          ConversationPage(items: [_conversation()]),
+        ],
+        'unread': [
+          ConversationPage(
+            items: [
+              _conversation(
+                id: 'conversation-unread',
+                title: 'Непрочитанный чат',
+                unreadCount: 4,
+              ),
+            ],
+          ),
+        ],
+        'archived': [
+          ConversationPage(
+            items: [
+              _conversation(
+                id: 'conversation-archived',
+                title: 'Архивный чат',
+                unreadCount: 1,
+                archivedAt: DateTime.utc(2026, 6, 26, 10),
+              ),
+            ],
+          ),
+        ],
+      },
+    );
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(restoreUser: _student),
+        chatRepository: chat,
+        realtimeService: _FakeRealtimeService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(chat.listConversationFilters, ['all']);
+    expect(find.text('ЕГЭ Информатика 2026'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('chats_filter_unread')));
+    await tester.pumpAndSettle();
+
+    expect(chat.listConversationFilters, ['all', 'unread']);
+    expect(find.text('Непрочитанный чат'), findsOneWidget);
+    final unreadChip = tester.widget<AppChip>(
+      find.byKey(const Key('chats_filter_unread')),
+    );
+    expect(unreadChip.selected, isTrue);
+
+    await tester.tap(find.byKey(const Key('chats_filter_archived')));
+    await tester.pumpAndSettle();
+
+    expect(chat.listConversationFilters, ['all', 'unread', 'archived']);
+    expect(find.text('Архивный чат'), findsOneWidget);
+    expect(find.text('В архиве'), findsOneWidget);
+    final archivedChip = tester.widget<AppChip>(
+      find.byKey(const Key('chats_filter_archived')),
+    );
+    expect(archivedChip.selected, isTrue);
+  });
+
+  testWidgets('chats pagination appends another page without duplicates', (
+    WidgetTester tester,
+  ) async {
+    final chat = _FakeChatRepository(
+      conversationPagesByFilter: {
+        'all': [
+          ConversationPage(items: [_conversation()], nextCursor: 'cursor-1'),
+          ConversationPage(
+            items: [
+              _conversation(),
+              _conversation(id: 'conversation-2', title: 'Физика 2026'),
+            ],
+          ),
+        ],
+      },
+    );
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(restoreUser: _student),
+        chatRepository: chat,
+        realtimeService: _FakeRealtimeService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('ЕГЭ Информатика 2026'), findsOneWidget);
+    expect(find.byKey(const Key('load_more_conversations')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('load_more_conversations')));
+    await tester.pumpAndSettle();
+
+    expect(chat.listConversationFilters, ['all', 'all']);
+    expect(chat.listConversationCursors, [null, 'cursor-1']);
+    expect(find.text('ЕГЭ Информатика 2026'), findsOneWidget);
+    expect(find.text('Физика 2026'), findsOneWidget);
+  });
+
+  testWidgets('chats archive and unarchive current user state', (
+    WidgetTester tester,
+  ) async {
+    final chat = _FakeChatRepository(
+      conversationPagesByFilter: {
+        'all': [
+          ConversationPage(items: [_conversation()]),
+        ],
+        'archived': [
+          ConversationPage(
+            items: [_conversation(archivedAt: DateTime.utc(2026, 6, 26, 10))],
+          ),
+        ],
+      },
+    );
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(restoreUser: _student),
+        chatRepository: chat,
+        realtimeService: _FakeRealtimeService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('conversation_menu_conversation-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('В архив'));
+    await tester.pumpAndSettle();
+
+    expect(chat.archivedConversationIds, ['conversation-1']);
+    expect(find.text('ЕГЭ Информатика 2026'), findsNothing);
+    expect(find.text('Чатов пока нет'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('chats_filter_archived')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('ЕГЭ Информатика 2026'), findsOneWidget);
+    expect(find.text('В архиве'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('conversation_menu_conversation-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Вернуть'));
+    await tester.pumpAndSettle();
+
+    expect(chat.unarchivedConversationIds, ['conversation-1']);
+    expect(find.text('ЕГЭ Информатика 2026'), findsNothing);
+    expect(find.text('Архив пуст'), findsOneWidget);
+  });
+
+  testWidgets('chats reload current filter on realtime list events', (
+    WidgetTester tester,
+  ) async {
+    final realtime = _FakeRealtimeService();
+    final chat = _FakeChatRepository(
+      conversationPagesByFilter: {
+        'all': [
+          ConversationPage(items: [_conversation(title: 'До события')]),
+          ConversationPage(items: [_conversation(title: 'После unread')]),
+          ConversationPage(items: [_conversation(title: 'После архива')]),
+          ConversationPage(items: [_conversation(title: 'После возврата')]),
+        ],
+      },
+    );
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(restoreUser: _student),
+        chatRepository: chat,
+        realtimeService: realtime,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('До события'), findsOneWidget);
+
+    realtime.emit('unread.changed');
+    await tester.pumpAndSettle();
+
+    expect(find.text('После unread'), findsOneWidget);
+
+    realtime.emit('conversation.archived');
+    await tester.pumpAndSettle();
+
+    expect(find.text('После архива'), findsOneWidget);
+
+    realtime.emit('conversation.unarchived');
+    await tester.pumpAndSettle();
+
+    expect(chat.listConversationFilters, ['all', 'all', 'all', 'all']);
+    expect(find.text('После возврата'), findsOneWidget);
   });
 
   testWidgets('login failure shows backend error', (WidgetTester tester) async {
@@ -217,6 +417,28 @@ const _student = AppUser(
   phone: '+79990000004',
 );
 
+Conversation _conversation({
+  String id = 'conversation-1',
+  String title = 'ЕГЭ Информатика 2026',
+  String type = 'group',
+  String preview = 'Пишите вопросы прямо в теме.',
+  int unreadCount = 2,
+  DateTime? archivedAt,
+}) {
+  return Conversation(
+    id: id,
+    type: type,
+    title: title,
+    topicTitle: 'Общий',
+    lastMessageSender: 'Мария',
+    lastMessagePreview: preview,
+    lastMessageTime: '14:32',
+    unreadCount: unreadCount,
+    defaultTopicId: 'topic-1',
+    archivedAt: archivedAt,
+  );
+}
+
 class _FakeAuthRepository implements AuthRepository {
   _FakeAuthRepository({this.restoreUser, this.loginError});
 
@@ -266,14 +488,23 @@ class _FakeChatRepository implements ChatRepository {
   _FakeChatRepository({
     this.hasExistingThread = true,
     this.messagesNewestFirst = false,
-  });
+    Map<String, List<ConversationPage>>? conversationPagesByFilter,
+  }) : conversationPagesByFilter =
+           conversationPagesByFilter ??
+           const <String, List<ConversationPage>>{};
 
   final bool hasExistingThread;
   final bool messagesNewestFirst;
+  final Map<String, List<ConversationPage>> conversationPagesByFilter;
   final sentTopicMessages = <String>[];
   final sentThreadMessages = <String>[];
   final createdThreadRootIds = <String>[];
   final createdTopicTitles = <String>[];
+  final listConversationFilters = <String>[];
+  final listConversationCursors = <String?>[];
+  final archivedConversationIds = <String>[];
+  final unarchivedConversationIds = <String>[];
+  final _conversationPageIndexByFilter = <String, int>{};
   final _rootByThread = <String, ChatMessage>{};
 
   @override
@@ -295,21 +526,17 @@ class _FakeChatRepository implements ChatRepository {
     String filter = 'all',
     String? cursor,
   }) async {
-    return const ConversationPage(
-      items: [
-        Conversation(
-          id: 'conversation-1',
-          type: 'group',
-          title: 'ЕГЭ Информатика 2026',
-          topicTitle: 'Общий',
-          lastMessageSender: 'Мария',
-          lastMessagePreview: 'Пишите вопросы прямо в теме.',
-          lastMessageTime: '14:32',
-          unreadCount: 2,
-          defaultTopicId: 'topic-1',
-        ),
-      ],
-    );
+    listConversationFilters.add(filter);
+    listConversationCursors.add(cursor);
+
+    final pages = conversationPagesByFilter[filter];
+    if (pages != null && pages.isNotEmpty) {
+      final index = _conversationPageIndexByFilter[filter] ?? 0;
+      _conversationPageIndexByFilter[filter] = index + 1;
+      return pages[index < pages.length ? index : pages.length - 1];
+    }
+
+    return ConversationPage(items: [_conversation()]);
   }
 
   @override
@@ -390,10 +617,14 @@ class _FakeChatRepository implements ChatRepository {
   }) async {}
 
   @override
-  Future<void> archiveConversation(String conversationId) async {}
+  Future<void> archiveConversation(String conversationId) async {
+    archivedConversationIds.add(conversationId);
+  }
 
   @override
-  Future<void> unarchiveConversation(String conversationId) async {}
+  Future<void> unarchiveConversation(String conversationId) async {
+    unarchivedConversationIds.add(conversationId);
+  }
 
   @override
   Future<MessagePage> listMessages(String topicId, {String? cursor}) async {
@@ -592,9 +823,23 @@ class _FakeChatRepository implements ChatRepository {
 
 class _FakeRealtimeService implements RealtimeService {
   final _events = StreamController<RealtimeEvent>.broadcast();
+  var _eventIndex = 0;
 
   @override
   Stream<RealtimeEvent> get events => _events.stream;
+
+  void emit(String eventType, {Map<String, dynamic>? data}) {
+    _events.add(
+      RealtimeEvent(
+        eventId: 'event-${_eventIndex++}',
+        eventType: eventType,
+        channel: 'user:${_student.id}',
+        occurredAt: DateTime.utc(2026, 6, 26, 10),
+        version: 1,
+        data: data ?? const <String, dynamic>{},
+      ),
+    );
+  }
 
   @override
   Future<void> connect() async {}

@@ -96,7 +96,7 @@ Verification notes:
 
 ## CL-2 - Chats List Filters, Archive, and Pagination
 
-Status: `pending`
+Status: `done`
 
 Scope:
 
@@ -109,16 +109,28 @@ Scope:
 
 Acceptance:
 
-- [ ] filter chips change the backend query and selected UI state;
-- [ ] archived conversations move to/from the archive filter for the current
+- [x] filter chips change the backend query and selected UI state;
+- [x] archived conversations move to/from the archive filter for the current
   user only;
-- [ ] pagination can load another page without duplicate rows;
-- [ ] realtime archive/unarchive/unread changes trigger an appropriate reload;
-- [ ] widget tests cover filter switching and archive/unarchive state.
+- [x] pagination can load another page without duplicate rows;
+- [x] realtime archive/unarchive/unread changes trigger an appropriate reload;
+- [x] widget tests cover filter switching and archive/unarchive state.
 
 Verification notes:
 
-- Pending.
+- 2026-06-26: Started implementation after checking backend API/product/realtime
+  docs for `filter=all|unread|archived`, personal archive behavior,
+  `next_cursor`, and `conversation.archived` / `conversation.unarchived` /
+  `unread.changed` reload expectations.
+- 2026-06-26: Implemented real chats filters, `next_cursor` load-more with
+  duplicate protection, personal archive/unarchive row actions, archived state
+  labels, filter-specific empty states, and list reloads for archive/unarchive,
+  membership/status, and unread realtime events. Added widget tests for filter
+  switching, pagination merge behavior, archive/unarchive state, and realtime
+  unread reload. Ran `dart format .`, `flutter analyze`, and `flutter test`;
+  analyze was clean and all 30 tests passed. XcodeBuildMCP `build_run_sim`
+  succeeded for `ios/Runner.xcworkspace` / `Runner` on booted `iPhone 17`, and
+  screenshot verification showed the launched login UI.
 
 ## CL-3 - Conversation Creation from Contact Discovery
 

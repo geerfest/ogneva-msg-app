@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ogneva_msg_app/data/repositories/chat_repository.dart';
@@ -70,14 +72,21 @@ class _ChatsContent extends StatelessWidget {
                         scrollDirection: Axis.horizontal,
                         child: Row(
                           children: [
-                            const AppChip(label: 'Все', selected: true),
-                            const SizedBox(width: 8),
-                            AppChip(
-                              label: 'Непрочитанные',
-                              count: viewModel.totalUnreadCount,
-                            ),
-                            const SizedBox(width: 8),
-                            const AppChip(label: 'Архив'),
+                            for (final filter in ChatsFilter.values) ...[
+                              AppChip(
+                                key: Key('chats_filter_${filter.apiValue}'),
+                                label: filter.label,
+                                selected: viewModel.selectedFilter == filter,
+                                count: filter == ChatsFilter.unread
+                                    ? viewModel.totalUnreadCount
+                                    : null,
+                                onTap: () {
+                                  unawaited(viewModel.selectFilter(filter));
+                                },
+                              ),
+                              if (filter != ChatsFilter.values.last)
+                                const SizedBox(width: 8),
+                            ],
                           ],
                         ),
                       );
@@ -133,7 +142,11 @@ class _ChatsContent extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 12),
                                 FilledButton.icon(
-                                  onPressed: viewModel.load,
+                                  onPressed: () {
+                                    unawaited(
+                                      viewModel.load(showFullLoader: true),
+                                    );
+                                  },
                                   icon: const Icon(Icons.refresh_rounded),
                                   label: const Text('Повторить'),
                                 ),
@@ -143,10 +156,10 @@ class _ChatsContent extends StatelessWidget {
                         }
                         final conversations = viewModel.conversations;
                         if (conversations.isEmpty) {
-                          return const _StateSurface(
+                          return _StateSurface(
                             child: Text(
-                              'Чатов пока нет',
-                              style: TextStyle(
+                              _emptyMessageFor(viewModel.selectedFilter),
+                              style: const TextStyle(
                                 color: AppColors.mutedText,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -156,15 +169,50 @@ class _ChatsContent extends StatelessWidget {
                         return AppSurface(
                           child: ListView.separated(
                             padding: EdgeInsets.zero,
-                            itemCount: conversations.length,
-                            separatorBuilder: (_, _) =>
-                                const Divider(indent: 76),
+                            itemCount:
+                                conversations.length +
+                                (viewModel.hasMore ||
+                                        viewModel.isLoadingMore ||
+                                        viewModel.loadMoreErrorMessage != null
+                                    ? 1
+                                    : 0),
+                            separatorBuilder: (_, index) =>
+                                index < conversations.length - 1
+                                ? const Divider(indent: 76)
+                                : const SizedBox.shrink(),
                             itemBuilder: (context, index) {
+                              if (index >= conversations.length) {
+                                return _PaginationRow(viewModel: viewModel);
+                              }
+                              final conversation = conversations[index];
                               return _ConversationRow(
-                                conversation: conversations[index],
-                                onTap: () => context.push(
-                                  '/chat/${conversations[index].id}',
+                                conversation: conversation,
+                                activeFilter: viewModel.selectedFilter,
+                                isBusy: viewModel.isConversationBusy(
+                                  conversation.id,
                                 ),
+                                onTap: () =>
+                                    context.push('/chat/${conversation.id}'),
+                                onArchive: () {
+                                  unawaited(
+                                    _runConversationAction(
+                                      context,
+                                      () => viewModel.archiveConversation(
+                                        conversation.id,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                onUnarchive: () {
+                                  unawaited(
+                                    _runConversationAction(
+                                      context,
+                                      () => viewModel.unarchiveConversation(
+                                        conversation.id,
+                                      ),
+                                    ),
+                                  );
+                                },
                               );
                             },
                           ),
@@ -182,6 +230,28 @@ class _ChatsContent extends StatelessWidget {
   }
 }
 
+String _emptyMessageFor(ChatsFilter filter) {
+  return switch (filter) {
+    ChatsFilter.all => 'Чатов пока нет',
+    ChatsFilter.unread => 'Непрочитанных чатов нет',
+    ChatsFilter.archived => 'Архив пуст',
+  };
+}
+
+Future<void> _runConversationAction(
+  BuildContext context,
+  Future<bool> Function() action,
+) async {
+  final succeeded = await action();
+  if (!context.mounted || succeeded) {
+    return;
+  }
+  final error =
+      context.read<ChatsViewModel>().actionErrorMessage ??
+      'Не получилось обновить архив';
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+}
+
 class _StateSurface extends StatelessWidget {
   const _StateSurface({required this.child});
 
@@ -197,14 +267,90 @@ class _StateSurface extends StatelessWidget {
   }
 }
 
-class _ConversationRow extends StatelessWidget {
-  const _ConversationRow({required this.conversation, required this.onTap});
+class _PaginationRow extends StatelessWidget {
+  const _PaginationRow({required this.viewModel});
 
-  final Conversation conversation;
-  final VoidCallback onTap;
+  final ChatsViewModel viewModel;
 
   @override
   Widget build(BuildContext context) {
+    if (viewModel.isLoadingMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 18),
+        child: Center(
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.4,
+              color: AppColors.primaryBlue,
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (viewModel.loadMoreErrorMessage != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        child: Column(
+          children: [
+            Text(
+              viewModel.loadMoreErrorMessage!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppColors.mutedText,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: () {
+                unawaited(viewModel.loadMore());
+              },
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Повторить'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      child: OutlinedButton.icon(
+        key: const Key('load_more_conversations'),
+        onPressed: () {
+          unawaited(viewModel.loadMore());
+        },
+        icon: const Icon(Icons.expand_more_rounded),
+        label: const Text('Показать ещё'),
+      ),
+    );
+  }
+}
+
+class _ConversationRow extends StatelessWidget {
+  const _ConversationRow({
+    required this.conversation,
+    required this.activeFilter,
+    required this.isBusy,
+    required this.onTap,
+    required this.onArchive,
+    required this.onUnarchive,
+  });
+
+  final Conversation conversation;
+  final ChatsFilter activeFilter;
+  final bool isBusy;
+  final VoidCallback onTap;
+  final VoidCallback onArchive;
+  final VoidCallback onUnarchive;
+
+  @override
+  Widget build(BuildContext context) {
+    final isInArchive =
+        activeFilter == ChatsFilter.archived || conversation.isArchived;
     return Semantics(
       button: true,
       label: 'Открыть чат ${conversation.title}',
@@ -246,6 +392,26 @@ class _ConversationRow extends StatelessWidget {
                           conversation.lastMessageTime,
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
+                        const SizedBox(width: 2),
+                        if (isBusy)
+                          const SizedBox(
+                            width: 32,
+                            height: 32,
+                            child: Padding(
+                              padding: EdgeInsets.all(7),
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppColors.primaryBlue,
+                              ),
+                            ),
+                          )
+                        else
+                          _ConversationMenu(
+                            conversationId: conversation.id,
+                            isInArchive: isInArchive,
+                            onArchive: onArchive,
+                            onUnarchive: onUnarchive,
+                          ),
                       ],
                     ),
                     const SizedBox(height: 6),
@@ -260,6 +426,7 @@ class _ConversationRow extends StatelessWidget {
                           const _StatusChip(label: 'Онлайн'),
                         if (conversation.isMuted)
                           const _IconOnlyChip(icon: Icons.volume_off_outlined),
+                        if (isInArchive) const _SmallChip(label: 'В архиве'),
                       ],
                     ),
                     const SizedBox(height: 7),
@@ -291,6 +458,64 @@ class _ConversationRow extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+enum _ConversationAction { archive, unarchive }
+
+class _ConversationMenu extends StatelessWidget {
+  const _ConversationMenu({
+    required this.conversationId,
+    required this.isInArchive,
+    required this.onArchive,
+    required this.onUnarchive,
+  });
+
+  final String conversationId;
+  final bool isInArchive;
+  final VoidCallback onArchive;
+  final VoidCallback onUnarchive;
+
+  @override
+  Widget build(BuildContext context) {
+    final action = isInArchive
+        ? _ConversationAction.unarchive
+        : _ConversationAction.archive;
+    return PopupMenuButton<_ConversationAction>(
+      key: Key('conversation_menu_$conversationId'),
+      tooltip: 'Действия с чатом',
+      icon: const Icon(Icons.more_horiz_rounded, size: 20),
+      onSelected: (selectedAction) {
+        switch (selectedAction) {
+          case _ConversationAction.archive:
+            onArchive();
+            break;
+          case _ConversationAction.unarchive:
+            onUnarchive();
+            break;
+        }
+      },
+      itemBuilder: (context) {
+        return [
+          PopupMenuItem<_ConversationAction>(
+            value: action,
+            child: Row(
+              children: [
+                Icon(
+                  isInArchive
+                      ? Icons.unarchive_outlined
+                      : Icons.archive_outlined,
+                  color: AppColors.primaryBlue,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Text(isInArchive ? 'Вернуть' : 'В архив'),
+              ],
+            ),
+          ),
+        ];
+      },
     );
   }
 }
