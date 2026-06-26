@@ -8,6 +8,7 @@ import 'package:ogneva_msg_app/data/repositories/chat_repository.dart';
 import 'package:ogneva_msg_app/data/services/messenger_api_client.dart';
 import 'package:ogneva_msg_app/data/services/realtime_service.dart';
 import 'package:ogneva_msg_app/domain/models/app_user.dart';
+import 'package:ogneva_msg_app/domain/models/contact.dart';
 import 'package:ogneva_msg_app/domain/models/conversation.dart';
 import 'package:ogneva_msg_app/domain/models/message.dart';
 import 'package:ogneva_msg_app/main.dart';
@@ -276,6 +277,20 @@ class _FakeChatRepository implements ChatRepository {
   final _rootByThread = <String, ChatMessage>{};
 
   @override
+  Future<List<Contact>> listContacts({String purpose = 'direct'}) async {
+    return const <Contact>[
+      Contact(
+        id: 'student-1',
+        role: 'student',
+        displayName: 'Иван',
+        email: 'student@example.com',
+        allowedConversationTypes: ['direct', 'group'],
+        reason: 'linked_student',
+      ),
+    ];
+  }
+
+  @override
   Future<ConversationPage> listConversations({
     String filter = 'all',
     String? cursor,
@@ -298,6 +313,25 @@ class _FakeChatRepository implements ChatRepository {
   }
 
   @override
+  Future<Conversation> createConversation({
+    required String type,
+    required List<String> memberIds,
+    String? title,
+  }) async {
+    return Conversation(
+      id: 'conversation-created',
+      type: type,
+      title: title ?? 'Личный чат',
+      topicTitle: 'Общий',
+      lastMessageSender: '',
+      lastMessagePreview: 'Сообщений пока нет',
+      lastMessageTime: '',
+      unreadCount: 0,
+      defaultTopicId: 'topic-created',
+    );
+  }
+
+  @override
   Future<ConversationDetail> loadConversation(String conversationId) async {
     return const ConversationDetail(
       conversation: Conversation(
@@ -316,6 +350,50 @@ class _FakeChatRepository implements ChatRepository {
       ],
     );
   }
+
+  @override
+  Future<ConversationMember> addMember({
+    required String conversationId,
+    required String userId,
+    String memberRole = 'member',
+    bool? canWrite,
+  }) async {
+    return ConversationMember(
+      userId: userId,
+      displayName: 'Иван',
+      memberRole: memberRole,
+      canWrite: canWrite ?? true,
+      muted: false,
+    );
+  }
+
+  @override
+  Future<ConversationMember> updateMember({
+    required String conversationId,
+    required String userId,
+    String? memberRole,
+    bool? canWrite,
+  }) async {
+    return ConversationMember(
+      userId: userId,
+      displayName: 'Иван',
+      memberRole: memberRole ?? 'member',
+      canWrite: canWrite ?? true,
+      muted: false,
+    );
+  }
+
+  @override
+  Future<void> removeMember({
+    required String conversationId,
+    required String userId,
+  }) async {}
+
+  @override
+  Future<void> archiveConversation(String conversationId) async {}
+
+  @override
+  Future<void> unarchiveConversation(String conversationId) async {}
 
   @override
   Future<MessagePage> listMessages(String topicId, {String? cursor}) async {
@@ -352,7 +430,10 @@ class _FakeChatRepository implements ChatRepository {
   }
 
   @override
-  Future<MessagePage> listThreadMessages(String threadId) async {
+  Future<MessagePage> listThreadMessages(
+    String threadId, {
+    String? cursor,
+  }) async {
     return const MessagePage(
       items: [
         ChatMessage(
@@ -364,6 +445,43 @@ class _FakeChatRepository implements ChatRepository {
           threadId: 'thread-1',
         ),
       ],
+    );
+  }
+
+  @override
+  Future<TopicInfo> updateTopic({
+    required String topicId,
+    String? title,
+    bool? isArchived,
+  }) async {
+    return TopicInfo(
+      id: topicId,
+      conversationId: 'conversation-1',
+      title: title ?? 'Общий',
+      unreadCount: 0,
+      isArchived: isArchived ?? false,
+    );
+  }
+
+  @override
+  Future<ChatMessage> editMessage({
+    required String messageId,
+    required String body,
+  }) async {
+    return ChatMessage(
+      id: messageId,
+      senderName: 'Вы',
+      body: body,
+      time: '14:45',
+      isMine: true,
+    );
+  }
+
+  @override
+  Future<MessageDeletion> deleteMessage(String messageId) async {
+    return MessageDeletion(
+      id: messageId,
+      deletedAt: DateTime.utc(2026, 6, 23, 14, 46),
     );
   }
 

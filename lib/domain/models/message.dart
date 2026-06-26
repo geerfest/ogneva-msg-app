@@ -136,3 +136,10 @@ class ThreadInfo {
   final DateTime? lastMessageAt;
   final DateTime? createdAt;
 }
+
+class MessageDeletion {
+  const MessageDeletion({required this.id, required this.deletedAt});
+
+  final String id;
+  final DateTime deletedAt;
+}

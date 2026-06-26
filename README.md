@@ -115,6 +115,8 @@ Dev seed пользователи:
 admin@example.com / admin123
 teacher@example.com / user123
 student@example.com / user123
+parent@example.com / user123
+student2@example.com / user123
 ```
 
 Для iOS Simulator backend `CENTRIFUGO_WS_URL` должен быть доступен как:
@@ -204,6 +206,6 @@ login -> chats -> chat -> thread
 
 ## Ближайшие Задачи
 
-- Проверить полный live сценарий на iOS Simulator с поднятым backend.
-- Добавить UI для создания чатов/тем, когда backend/product scope будет готов.
-- Добавить edit/delete UI и offline queue по `docs/OFFLINE_OUTBOX.md`.
+- Productized messenger client work ведется по `docs/tasks/productized-messenger-client.md`.
+- Ближайший этап: data-layer parity с backend contract, затем chats filters/archive, create-chat flow, chat management, message edit/delete, pagination и realtime invalidation.
+- Offline queue остается отдельным будущим этапом по `docs/OFFLINE_OUTBOX.md`.

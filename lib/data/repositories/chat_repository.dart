@@ -1,6 +1,7 @@
 import 'package:ogneva_msg_app/data/models/messenger_dtos.dart';
 import 'package:ogneva_msg_app/data/repositories/auth_repository.dart';
 import 'package:ogneva_msg_app/data/services/messenger_api_client.dart';
+import 'package:ogneva_msg_app/domain/models/contact.dart';
 import 'package:ogneva_msg_app/domain/models/conversation.dart';
 import 'package:ogneva_msg_app/domain/models/message.dart';
 
@@ -12,10 +13,15 @@ class ConversationPage {
 }
 
 class ConversationDetail {
-  const ConversationDetail({required this.conversation, required this.topics});
+  const ConversationDetail({
+    required this.conversation,
+    required this.topics,
+    this.members = const <ConversationMember>[],
+  });
 
   final Conversation conversation;
   final List<TopicInfo> topics;
+  final List<ConversationMember> members;
 }
 
 class MessagePage {
@@ -26,16 +32,47 @@ class MessagePage {
 }
 
 abstract class ChatRepository {
+  Future<List<Contact>> listContacts({String purpose = 'direct'});
+
   Future<ConversationPage> listConversations({
     String filter = 'all',
     String? cursor,
+  });
+
+  Future<Conversation> createConversation({
+    required String type,
+    required List<String> memberIds,
+    String? title,
   });
 
   Future<ConversationDetail> loadConversation(String conversationId);
 
   Future<MessagePage> listMessages(String topicId, {String? cursor});
 
-  Future<MessagePage> listThreadMessages(String threadId);
+  Future<MessagePage> listThreadMessages(String threadId, {String? cursor});
+
+  Future<ConversationMember> addMember({
+    required String conversationId,
+    required String userId,
+    String memberRole = 'member',
+    bool? canWrite,
+  });
+
+  Future<ConversationMember> updateMember({
+    required String conversationId,
+    required String userId,
+    String? memberRole,
+    bool? canWrite,
+  });
+
+  Future<void> removeMember({
+    required String conversationId,
+    required String userId,
+  });
+
+  Future<void> archiveConversation(String conversationId);
+
+  Future<void> unarchiveConversation(String conversationId);
 
   Future<ChatMessage> sendTopicMessage({
     required String topicId,
@@ -55,6 +92,19 @@ abstract class ChatRepository {
     required String conversationId,
     required String title,
   });
+
+  Future<TopicInfo> updateTopic({
+    required String topicId,
+    String? title,
+    bool? isArchived,
+  });
+
+  Future<ChatMessage> editMessage({
+    required String messageId,
+    required String body,
+  });
+
+  Future<MessageDeletion> deleteMessage(String messageId);
 
   Future<void> markTopicRead({
     required String topicId,
@@ -86,6 +136,19 @@ class ApiChatRepository implements ChatRepository {
   final Map<String, ChatMessage> _rootMessagesByThreadId = {};
 
   @override
+  Future<List<Contact>> listContacts({String purpose = 'direct'}) async {
+    final response = await _authorized(
+      (token) => _apiClient.getJson(
+        '/contacts',
+        accessToken: token,
+        query: {'purpose': purpose},
+      ),
+    );
+    final contacts = ApiListResponse.fromJson(response, ApiContact.fromJson);
+    return contacts.items.map(_contactFromApi).toList();
+  }
+
+  @override
   Future<ConversationPage> listConversations({
     String filter = 'all',
     String? cursor,
@@ -105,6 +168,30 @@ class ApiChatRepository implements ChatRepository {
   }
 
   @override
+  Future<Conversation> createConversation({
+    required String type,
+    required List<String> memberIds,
+    String? title,
+  }) async {
+    final trimmedTitle = title?.trim();
+    final response = await _authorized(
+      (token) => _apiClient.postJson(
+        '/conversations',
+        accessToken: token,
+        body: {
+          'type': type,
+          if (trimmedTitle != null && trimmedTitle.isNotEmpty)
+            'title': trimmedTitle,
+          'member_ids': memberIds,
+        },
+      ),
+    );
+    final conversation = ApiConversation.fromJson(response);
+    _cacheMembers(conversation);
+    return _conversationFromApi(conversation);
+  }
+
+  @override
   Future<ConversationDetail> loadConversation(String conversationId) async {
     final response = await _authorized(
       (token) => _apiClient.getJson(
@@ -117,6 +204,7 @@ class ApiChatRepository implements ChatRepository {
     return ConversationDetail(
       conversation: _conversationFromApi(apiConversation),
       topics: apiConversation.topics.map(_topicFromApi).toList(),
+      members: apiConversation.members.map(_memberFromApi).toList(),
     );
   }
 
@@ -136,14 +224,101 @@ class ApiChatRepository implements ChatRepository {
   }
 
   @override
-  Future<MessagePage> listThreadMessages(String threadId) async {
+  Future<MessagePage> listThreadMessages(
+    String threadId, {
+    String? cursor,
+  }) async {
     final response = await _authorized(
-      (token) =>
-          _apiClient.getJson('/threads/$threadId/messages', accessToken: token),
+      (token) => _apiClient.getJson(
+        '/threads/$threadId/messages',
+        accessToken: token,
+        query: {'limit': '50', 'cursor': cursor},
+      ),
     );
     final page = ApiListResponse.fromJson(response, ApiMessage.fromJson);
     final messages = sortChatMessagesAscending(page.items.map(_messageFromApi));
     return MessagePage(items: messages, nextCursor: page.nextCursor);
+  }
+
+  @override
+  Future<ConversationMember> addMember({
+    required String conversationId,
+    required String userId,
+    String memberRole = 'member',
+    bool? canWrite,
+  }) async {
+    final body = <String, dynamic>{
+      'user_id': userId,
+      'member_role': memberRole,
+    };
+    if (canWrite != null) {
+      body['can_write'] = canWrite;
+    }
+    final response = await _authorized(
+      (token) => _apiClient.postJson(
+        '/conversations/$conversationId/members',
+        accessToken: token,
+        body: body,
+      ),
+    );
+    return _memberFromApi(ApiMember.fromJson(response));
+  }
+
+  @override
+  Future<ConversationMember> updateMember({
+    required String conversationId,
+    required String userId,
+    String? memberRole,
+    bool? canWrite,
+  }) async {
+    final body = <String, dynamic>{};
+    if (memberRole != null) {
+      body['member_role'] = memberRole;
+    }
+    if (canWrite != null) {
+      body['can_write'] = canWrite;
+    }
+    final response = await _authorized(
+      (token) => _apiClient.patchJson(
+        '/conversations/$conversationId/members/$userId',
+        accessToken: token,
+        body: body,
+      ),
+    );
+    return _memberFromApi(ApiMember.fromJson(response));
+  }
+
+  @override
+  Future<void> removeMember({
+    required String conversationId,
+    required String userId,
+  }) async {
+    await _authorized(
+      (token) => _apiClient.deleteVoid(
+        '/conversations/$conversationId/members/$userId',
+        accessToken: token,
+      ),
+    );
+  }
+
+  @override
+  Future<void> archiveConversation(String conversationId) async {
+    await _authorized(
+      (token) => _apiClient.postVoid(
+        '/conversations/$conversationId/archive',
+        accessToken: token,
+      ),
+    );
+  }
+
+  @override
+  Future<void> unarchiveConversation(String conversationId) async {
+    await _authorized(
+      (token) => _apiClient.postVoid(
+        '/conversations/$conversationId/unarchive',
+        accessToken: token,
+      ),
+    );
   }
 
   @override
@@ -204,6 +379,57 @@ class ApiChatRepository implements ChatRepository {
       ),
     );
     return _topicFromApi(ApiTopic.fromJson(response));
+  }
+
+  @override
+  Future<TopicInfo> updateTopic({
+    required String topicId,
+    String? title,
+    bool? isArchived,
+  }) async {
+    final trimmedTitle = title?.trim();
+    final body = <String, dynamic>{};
+    if (trimmedTitle != null && trimmedTitle.isNotEmpty) {
+      body['title'] = trimmedTitle;
+    }
+    if (isArchived != null) {
+      body['is_archived'] = isArchived;
+    }
+    final response = await _authorized(
+      (token) => _apiClient.patchJson(
+        '/topics/$topicId',
+        accessToken: token,
+        body: body,
+      ),
+    );
+    return _topicFromApi(ApiTopic.fromJson(response));
+  }
+
+  @override
+  Future<ChatMessage> editMessage({
+    required String messageId,
+    required String body,
+  }) async {
+    final response = await _authorized(
+      (token) => _apiClient.patchJson(
+        '/messages/$messageId',
+        accessToken: token,
+        body: {'body': body.trim()},
+      ),
+    );
+    final message = _messageFromApi(ApiMessage.fromJson(response));
+    _cacheRootMessages([message]);
+    return message;
+  }
+
+  @override
+  Future<MessageDeletion> deleteMessage(String messageId) async {
+    final response = await _authorized(
+      (token) =>
+          _apiClient.deleteJson('/messages/$messageId', accessToken: token),
+    );
+    final deletion = ApiMessageDeletion.fromJson(response);
+    return MessageDeletion(id: deletion.id, deletedAt: deletion.deletedAt);
   }
 
   @override
@@ -279,6 +505,17 @@ class ApiChatRepository implements ChatRepository {
     }
   }
 
+  Contact _contactFromApi(ApiContact contact) {
+    return Contact(
+      id: contact.id,
+      role: contact.role,
+      displayName: contact.displayName,
+      email: contact.email,
+      allowedConversationTypes: contact.allowedConversationTypes,
+      reason: contact.reason,
+    );
+  }
+
   Conversation _conversationFromApi(ApiConversation conversation) {
     final lastMessage = conversation.lastMessage;
     final senderName = lastMessage == null
@@ -304,7 +541,22 @@ class ApiChatRepository implements ChatRepository {
       status: conversation.status,
       defaultTopicId: conversation.defaultTopicId,
       lastMessageTopicId: lastMessage?.topicId,
+      lastActivityAt: conversation.lastActivityAt,
+      archivedAt: conversation.archivedAt,
       createdAt: conversation.createdAt,
+      members: conversation.members.map(_memberFromApi).toList(),
+    );
+  }
+
+  ConversationMember _memberFromApi(ApiMember member) {
+    return ConversationMember(
+      userId: member.userId,
+      displayName: member.displayName,
+      memberRole: member.memberRole,
+      canWrite: member.canWrite,
+      muted: member.muted,
+      joinedAt: member.joinedAt,
+      leftAt: member.leftAt,
     );
   }
 

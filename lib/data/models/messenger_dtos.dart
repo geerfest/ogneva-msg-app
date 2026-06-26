@@ -19,16 +19,51 @@ class ApiListResponse<T> {
   final String? nextCursor;
 }
 
+class ApiContact {
+  const ApiContact({
+    required this.id,
+    required this.role,
+    required this.displayName,
+    required this.allowedConversationTypes,
+    required this.reason,
+    this.email,
+  });
+
+  factory ApiContact.fromJson(Map<String, dynamic> json) {
+    return ApiContact(
+      id: json['id'] as String,
+      role: json['role'] as String,
+      displayName: json['display_name'] as String,
+      email: json['email'] as String?,
+      allowedConversationTypes:
+          (json['allowed_conversation_types'] as List<dynamic>? ??
+                  const <dynamic>[])
+              .cast<String>()
+              .toList(),
+      reason: json['reason'] as String,
+    );
+  }
+
+  final String id;
+  final String role;
+  final String displayName;
+  final String? email;
+  final List<String> allowedConversationTypes;
+  final String reason;
+}
+
 class ApiConversation {
   const ApiConversation({
     required this.id,
     required this.type,
     required this.status,
     required this.unreadCount,
+    required this.lastActivityAt,
     required this.createdAt,
     this.title,
     this.defaultTopicId,
     this.lastMessage,
+    this.archivedAt,
     this.topics = const <ApiTopic>[],
     this.members = const <ApiMember>[],
   });
@@ -42,6 +77,8 @@ class ApiConversation {
       defaultTopicId: json['default_topic_id'] as String?,
       lastMessage: _optionalMap(json['last_message'], ApiMessage.fromJson),
       unreadCount: _asInt(json['unread_count']),
+      lastActivityAt: _dateTime(json['last_activity_at']),
+      archivedAt: _optionalDateTime(json['archived_at']),
       createdAt: _dateTime(json['created_at']),
       topics: _list(json['topics'], ApiTopic.fromJson),
       members: _list(json['members'], ApiMember.fromJson),
@@ -55,6 +92,8 @@ class ApiConversation {
   final String? defaultTopicId;
   final ApiMessage? lastMessage;
   final int unreadCount;
+  final DateTime lastActivityAt;
+  final DateTime? archivedAt;
   final DateTime createdAt;
   final List<ApiTopic> topics;
   final List<ApiMember> members;
@@ -67,6 +106,8 @@ class ApiMember {
     required this.memberRole,
     required this.canWrite,
     required this.muted,
+    this.joinedAt,
+    this.leftAt,
   });
 
   factory ApiMember.fromJson(Map<String, dynamic> json) {
@@ -76,6 +117,8 @@ class ApiMember {
       memberRole: json['member_role'] as String? ?? 'member',
       canWrite: json['can_write'] as bool? ?? true,
       muted: json['muted'] as bool? ?? false,
+      joinedAt: _optionalDateTime(json['joined_at']),
+      leftAt: _optionalDateTime(json['left_at']),
     );
   }
 
@@ -84,6 +127,8 @@ class ApiMember {
   final String memberRole;
   final bool canWrite;
   final bool muted;
+  final DateTime? joinedAt;
+  final DateTime? leftAt;
 }
 
 class ApiTopic {
@@ -204,6 +249,20 @@ class ApiThread {
   final int messageCount;
   final DateTime? lastMessageAt;
   final DateTime? createdAt;
+}
+
+class ApiMessageDeletion {
+  const ApiMessageDeletion({required this.id, required this.deletedAt});
+
+  factory ApiMessageDeletion.fromJson(Map<String, dynamic> json) {
+    return ApiMessageDeletion(
+      id: json['id'] as String,
+      deletedAt: _dateTime(json['deleted_at']),
+    );
+  }
+
+  final String id;
+  final DateTime deletedAt;
 }
 
 List<T> _list<T>(Object? raw, T Function(Map<String, dynamic>) itemFromJson) {

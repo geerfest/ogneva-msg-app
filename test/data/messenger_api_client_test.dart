@@ -37,6 +37,58 @@ void main() {
     );
   });
 
+  test('patchJson encodes request body and decodes response', () async {
+    final client = MessengerApiClient(
+      baseUrl: 'http://localhost:8080/api/v1',
+      client: MockClient((request) async {
+        expect(request.method, 'PATCH');
+        expect(
+          request.url.toString(),
+          'http://localhost:8080/api/v1/topics/topic-1',
+        );
+        expect(
+          request.headers['content-type'],
+          'application/json; charset=UTF-8',
+        );
+        expect(request.body, '{"title":"Новая тема"}');
+        return http.Response('{"id":"topic-1"}', 200);
+      }),
+    );
+
+    final json = await client.patchJson(
+      '/topics/topic-1',
+      accessToken: 'token',
+      body: {'title': 'Новая тема'},
+    );
+
+    expect(json['id'], 'topic-1');
+  });
+
+  test('deleteJson decodes successful object response', () async {
+    final client = MessengerApiClient(
+      baseUrl: 'http://localhost:8080/api/v1',
+      client: MockClient((request) async {
+        expect(request.method, 'DELETE');
+        expect(
+          request.url.toString(),
+          'http://localhost:8080/api/v1/messages/message-1',
+        );
+        return http.Response(
+          '{"id":"message-1","deleted_at":"2026-06-23T10:10:00Z"}',
+          200,
+        );
+      }),
+    );
+
+    final json = await client.deleteJson(
+      '/messages/message-1',
+      accessToken: 'token',
+    );
+
+    expect(json['id'], 'message-1');
+    expect(json['deleted_at'], '2026-06-23T10:10:00Z');
+  });
+
   test('backend error envelope becomes ApiException', () async {
     final client = MessengerApiClient(
       baseUrl: 'http://localhost:8080/api/v1',
