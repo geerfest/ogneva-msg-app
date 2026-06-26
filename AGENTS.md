@@ -10,7 +10,19 @@
 https://github.com/geerfest/ogneva-msg
 ```
 
-Текущий клиент уже содержит экранный MVP на моковых данных. При разработке важно не путать mock-layer с будущей live-интеграцией: если задача про API, сначала проверь контракт backend, затем меняй data-layer клиента.
+Текущий клиент подключен к live MVP backend. Runtime mock-режима в приложении нет; тесты используют явно инжектированные fakes.
+
+Если задача про продуктовую логику, роли, права, контакты, realtime, payload или API, сначала проверь backend-репозиторий:
+
+```text
+/Users/geerfest/projects/ogneva-msg/docs/PRODUCT_REQUIREMENTS.md
+/Users/geerfest/projects/ogneva-msg/docs/tasks/post-mvp-productization.md
+/Users/geerfest/projects/ogneva-msg/docs/API.md
+/Users/geerfest/projects/ogneva-msg/docs/REALTIME_EVENTS.md
+/Users/geerfest/projects/ogneva-msg/api/openapi.yaml
+```
+
+Backend product/API docs являются source of truth для межрепозиторного контракта. В этом репозитории веди клиентский execution tracker, UI/UX решения и проверочный статус.
 
 ## Главные Правила
 
@@ -22,6 +34,49 @@ https://github.com/geerfest/ogneva-msg
 - Не коммить build-артефакты, DerivedData, `.dart_tool`, `build/`, IDE-кэш и локальные env-файлы.
 - Для UI-изменений проверяй, что элементы не переполняются на маленьком экране.
 - Для кликабельных строк и компактных controls добавляй понятную tappable-зону и `Semantics`, если это помогает accessibility и тестам.
+- Не собирай список пользователей для чата из "всех users". Для выбора получателей используй backend contact discovery.
+
+## Task Flow
+
+Новая продуктовая клиентская работа ведется через task-файлы в:
+
+```text
+docs/tasks/
+```
+
+Текущий tracker:
+
+```text
+docs/tasks/productized-messenger-client.md
+```
+
+Правила:
+
+- перед началом этапа проверь backend docs, затем обнови статус задачи на `in_progress`;
+- двигайся по task-файлу сверху вниз, если пользователь не меняет приоритет;
+- после завершения этапа отметь acceptance items, добавь verification note и только потом переходи дальше;
+- если контракт backend непонятен или противоречив, не додумывай silently: зафиксируй вопрос в task-файле или спроси пользователя;
+- если меняется продуктовая логика, роли, права или API-контракт, источник правды должен быть обновлен на backend стороне; в этом репозитории можно добавить краткую клиентскую ссылку/заметку, но не дублировать весь продуктовый spec.
+
+## Cross-Repo Workflow
+
+Рабочая схема для одного продукта в двух репозиториях:
+
+- `ogneva-msg` хранит продуктовые правила, API/realtime контракт, migrations, smoke-доказательства и backend task history.
+- `ogneva-msg-app` хранит клиентские задачи, UI state, навигацию, view models, DTO parsing, widget/unit tests и simulator verification.
+- Перед data-layer изменениями сверяй route/payload/response по backend docs и при необходимости по backend handler/dto.
+- Перед UI flow изменениями проверь, какие роли и действия разрешены backend политикой; UI может скрывать недоступные действия, но backend остается authority.
+
+## Subagent / Review Workflow
+
+Для крупных или сквозных этапов полезны независимые проверки, если tooling доступен:
+
+- contract pass: сравнить backend docs/OpenAPI с клиентскими DTO/repository методами;
+- UI pass: проверить экранные состояния, overflow и доступность;
+- realtime pass: проверить обработку событий и reload-инвалидацию;
+- verification pass: составить live сценарии перед iOS simulator run.
+
+Главный агент все равно сам читает инструкции, принимает финальные решения, запускает итоговые проверки и обновляет task-файл.
 
 ## Архитектура
 
@@ -125,10 +180,18 @@ flutter test
 flutter run -d <simulator-or-device>
 ```
 
+Когда доступен iOS Build app / XcodeBuildMCP plugin, используй его для simulator verification. Перед первым build/run/test в сессии проверь defaults, затем запускай приложение на iOS Simulator и проходи релевантный сценарий.
+
 Проверяй как минимум сценарий:
 
 ```text
 login -> chats -> chat -> thread
+```
+
+Для productized messenger работы расширяй live сценарий по мере готовности:
+
+```text
+login -> contacts -> create direct/support/group -> chats filters/archive -> chat management -> edit/delete -> pagination -> realtime refresh
 ```
 
 ## Тесты

@@ -102,6 +102,18 @@ class MessengerApiClient {
     _ensureSuccess(response, successStatus);
   }
 
+  Future<Map<String, dynamic>> deleteJson(
+    String path, {
+    String? accessToken,
+    Set<int> successStatus = const {200},
+  }) async {
+    final response = await _client.delete(
+      _uri(path),
+      headers: _headers(accessToken),
+    );
+    return _decodeObject(response, successStatus: successStatus);
+  }
+
   void close() => _client.close();
 
   Uri _uri(String path, [Map<String, String?>? query]) {

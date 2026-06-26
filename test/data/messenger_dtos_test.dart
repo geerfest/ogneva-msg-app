@@ -10,6 +10,8 @@ void main() {
       'status': 'open',
       'default_topic_id': 'topic-1',
       'unread_count': 3,
+      'last_activity_at': '2026-06-23T10:05:00Z',
+      'archived_at': '2026-06-24T09:00:00Z',
       'created_at': '2026-06-23T10:00:00Z',
       'last_message': {
         'id': 'message-1',
@@ -54,13 +56,37 @@ void main() {
           'member_role': 'member',
           'can_write': true,
           'muted': false,
+          'joined_at': '2026-06-23T10:00:00Z',
+          'left_at': null,
         },
       ],
     });
 
     expect(conversation.lastMessage?.thread?.messageCount, 2);
+    expect(conversation.lastActivityAt, DateTime.utc(2026, 6, 23, 10, 5));
+    expect(conversation.archivedAt, DateTime.utc(2026, 6, 24, 9));
     expect(conversation.topics.single.lastReadSeq, 4);
     expect(conversation.members.single.displayName, 'Мария');
+    expect(conversation.members.single.joinedAt, DateTime.utc(2026, 6, 23, 10));
+    expect(conversation.members.single.leftAt, isNull);
+  });
+
+  test('contact dto parses discovery contract', () {
+    final contact = ApiContact.fromJson({
+      'id': 'user-1',
+      'role': 'teacher',
+      'display_name': 'Мария',
+      'email': 'teacher@example.com',
+      'allowed_conversation_types': ['direct', 'group'],
+      'reason': 'linked_teacher',
+    });
+
+    expect(contact.id, 'user-1');
+    expect(contact.role, 'teacher');
+    expect(contact.displayName, 'Мария');
+    expect(contact.email, 'teacher@example.com');
+    expect(contact.allowedConversationTypes, ['direct', 'group']);
+    expect(contact.reason, 'linked_teacher');
   });
 
   test('list response parses items and cursor', () {
@@ -84,5 +110,15 @@ void main() {
 
     expect(page.items.single.id, 'topic-1');
     expect(page.nextCursor, 'cursor-2');
+  });
+
+  test('delete message response parses tombstone data', () {
+    final deletion = ApiMessageDeletion.fromJson({
+      'id': 'message-1',
+      'deleted_at': '2026-06-23T10:10:00Z',
+    });
+
+    expect(deletion.id, 'message-1');
+    expect(deletion.deletedAt, DateTime.utc(2026, 6, 23, 10, 10));
   });
 }
