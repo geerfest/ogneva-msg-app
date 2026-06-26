@@ -234,6 +234,165 @@ void main() {
     expect(find.text('После возврата'), findsOneWidget);
   });
 
+  testWidgets('create chat flow opens returned direct conversation', (
+    WidgetTester tester,
+  ) async {
+    final chat = _FakeChatRepository(
+      directContacts: const [
+        Contact(
+          id: 'teacher-1',
+          role: 'teacher',
+          displayName: 'Мария Иванова',
+          email: 'teacher@example.com',
+          allowedConversationTypes: ['direct'],
+          reason: 'linked_teacher',
+        ),
+      ],
+      groupContacts: const <Contact>[],
+      createConversationResponse: _conversation(
+        id: 'existing-direct',
+        title: 'Мария Иванова',
+        type: 'direct',
+        unreadCount: 0,
+      ),
+    );
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(restoreUser: _student),
+        chatRepository: chat,
+        realtimeService: _FakeRealtimeService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Создать чат'));
+    await tester.pumpAndSettle();
+
+    expect(chat.contactPurposes, ['direct', 'group_member']);
+    expect(find.text('Новый чат'), findsOneWidget);
+    expect(find.text('Мария Иванова'), findsOneWidget);
+
+    await tester.tap(find.text('Мария Иванова'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('create_chat_submit_button')));
+    await tester.pumpAndSettle();
+
+    expect(chat.createdConversationRequests, hasLength(1));
+    final request = chat.createdConversationRequests.single;
+    expect(request.type, 'direct');
+    expect(request.memberIds, ['teacher-1']);
+    expect(request.title, isNull);
+    expect(find.text('Мария Иванова'), findsOneWidget);
+  });
+
+  testWidgets('create chat flow shows backend policy errors', (
+    WidgetTester tester,
+  ) async {
+    final chat = _FakeChatRepository(
+      directContacts: const [
+        Contact(
+          id: 'teacher-1',
+          role: 'teacher',
+          displayName: 'Мария Иванова',
+          email: 'teacher@example.com',
+          allowedConversationTypes: ['direct'],
+          reason: 'linked_teacher',
+        ),
+      ],
+      groupContacts: const <Contact>[],
+      createConversationError: const ApiException(
+        statusCode: 403,
+        code: 'permission_denied',
+        message: 'Нельзя создать чат с этим контактом',
+        details: <String, dynamic>{},
+      ),
+    );
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(restoreUser: _student),
+        chatRepository: chat,
+        realtimeService: _FakeRealtimeService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Создать чат'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Мария Иванова'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('create_chat_submit_button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Нельзя создать чат с этим контактом'), findsOneWidget);
+    expect(find.text('Новый чат'), findsOneWidget);
+  });
+
+  testWidgets('create chat flow creates group from group-member discovery', (
+    WidgetTester tester,
+  ) async {
+    final chat = _FakeChatRepository(
+      directContacts: const <Contact>[],
+      groupContacts: const [
+        Contact(
+          id: 'teacher-1',
+          role: 'teacher',
+          displayName: 'Мария Учитель',
+          email: 'teacher@example.com',
+          allowedConversationTypes: ['group'],
+          reason: 'group_allowed',
+        ),
+        Contact(
+          id: 'student-1',
+          role: 'student',
+          displayName: 'Иван Студент',
+          email: 'student@example.com',
+          allowedConversationTypes: ['group'],
+          reason: 'group_allowed',
+        ),
+      ],
+      createConversationResponse: _conversation(
+        id: 'created-group',
+        title: 'Групповой чат',
+        type: 'group',
+        unreadCount: 0,
+      ),
+    );
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(restoreUser: _admin),
+        chatRepository: chat,
+        realtimeService: _FakeRealtimeService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Создать чат'));
+    await tester.pumpAndSettle();
+
+    expect(chat.contactPurposes, ['direct', 'group_member']);
+    expect(find.byKey(const Key('create_chat_mode_group')), findsOneWidget);
+    expect(
+      find.byKey(const Key('create_chat_group_title_input')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Мария Учитель'));
+    await tester.tap(find.text('Иван Студент'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('create_chat_submit_button')));
+    await tester.pumpAndSettle();
+
+    expect(chat.createdConversationRequests, hasLength(1));
+    final request = chat.createdConversationRequests.single;
+    expect(request.type, 'group');
+    expect(request.memberIds, ['teacher-1', 'student-1']);
+    expect(request.title, isNull);
+    expect(find.text('Групповой чат'), findsWidgets);
+  });
+
   testWidgets('login failure shows backend error', (WidgetTester tester) async {
     final auth = _FakeAuthRepository(loginError: 'Неверный логин или пароль');
 
@@ -417,6 +576,14 @@ const _student = AppUser(
   phone: '+79990000004',
 );
 
+const _admin = AppUser(
+  id: '00000000-0000-0000-0000-000000000002',
+  role: 'admin',
+  displayName: 'Dev Admin',
+  email: 'admin@example.com',
+  phone: '+79990000002',
+);
+
 Conversation _conversation({
   String id = 'conversation-1',
   String title = 'ЕГЭ Информатика 2026',
@@ -437,6 +604,18 @@ Conversation _conversation({
     defaultTopicId: 'topic-1',
     archivedAt: archivedAt,
   );
+}
+
+class _CreatedConversationRequest {
+  const _CreatedConversationRequest({
+    required this.type,
+    required this.memberIds,
+    this.title,
+  });
+
+  final String type;
+  final List<String> memberIds;
+  final String? title;
 }
 
 class _FakeAuthRepository implements AuthRepository {
@@ -489,36 +668,63 @@ class _FakeChatRepository implements ChatRepository {
     this.hasExistingThread = true,
     this.messagesNewestFirst = false,
     Map<String, List<ConversationPage>>? conversationPagesByFilter,
+    List<Contact>? directContacts,
+    List<Contact>? groupContacts,
+    this.createConversationResponse,
+    this.createConversationError,
   }) : conversationPagesByFilter =
            conversationPagesByFilter ??
-           const <String, List<ConversationPage>>{};
+           const <String, List<ConversationPage>>{},
+       directContacts =
+           directContacts ??
+           const [
+             Contact(
+               id: 'student-1',
+               role: 'student',
+               displayName: 'Иван',
+               email: 'student@example.com',
+               allowedConversationTypes: ['direct', 'group'],
+               reason: 'linked_student',
+             ),
+           ],
+       groupContacts =
+           groupContacts ??
+           const [
+             Contact(
+               id: 'student-1',
+               role: 'student',
+               displayName: 'Иван',
+               email: 'student@example.com',
+               allowedConversationTypes: ['group'],
+               reason: 'group_allowed',
+             ),
+           ];
 
   final bool hasExistingThread;
   final bool messagesNewestFirst;
   final Map<String, List<ConversationPage>> conversationPagesByFilter;
+  final List<Contact> directContacts;
+  final List<Contact> groupContacts;
+  final Conversation? createConversationResponse;
+  final ApiException? createConversationError;
   final sentTopicMessages = <String>[];
   final sentThreadMessages = <String>[];
   final createdThreadRootIds = <String>[];
   final createdTopicTitles = <String>[];
+  final createdConversationRequests = <_CreatedConversationRequest>[];
+  final contactPurposes = <String>[];
   final listConversationFilters = <String>[];
   final listConversationCursors = <String?>[];
   final archivedConversationIds = <String>[];
   final unarchivedConversationIds = <String>[];
   final _conversationPageIndexByFilter = <String, int>{};
+  final _createdConversationsById = <String, Conversation>{};
   final _rootByThread = <String, ChatMessage>{};
 
   @override
   Future<List<Contact>> listContacts({String purpose = 'direct'}) async {
-    return const <Contact>[
-      Contact(
-        id: 'student-1',
-        role: 'student',
-        displayName: 'Иван',
-        email: 'student@example.com',
-        allowedConversationTypes: ['direct', 'group'],
-        reason: 'linked_student',
-      ),
-    ];
+    contactPurposes.add(purpose);
+    return purpose == 'group_member' ? groupContacts : directContacts;
   }
 
   @override
@@ -545,35 +751,53 @@ class _FakeChatRepository implements ChatRepository {
     required List<String> memberIds,
     String? title,
   }) async {
-    return Conversation(
-      id: 'conversation-created',
-      type: type,
-      title: title ?? 'Личный чат',
-      topicTitle: 'Общий',
-      lastMessageSender: '',
-      lastMessagePreview: 'Сообщений пока нет',
-      lastMessageTime: '',
-      unreadCount: 0,
-      defaultTopicId: 'topic-created',
+    if (createConversationError != null) {
+      throw createConversationError!;
+    }
+    createdConversationRequests.add(
+      _CreatedConversationRequest(
+        type: type,
+        memberIds: memberIds,
+        title: title,
+      ),
     );
+    final conversation =
+        createConversationResponse ??
+        Conversation(
+          id: 'conversation-created-${createdConversationRequests.length}',
+          type: type,
+          title: title?.trim().isNotEmpty == true
+              ? title!.trim()
+              : switch (type) {
+                  'direct' => 'Личный чат',
+                  'support' => 'Поддержка',
+                  _ => 'Групповой чат',
+                },
+          topicTitle: 'Общий',
+          lastMessageSender: '',
+          lastMessagePreview: 'Сообщений пока нет',
+          lastMessageTime: '',
+          unreadCount: 0,
+          defaultTopicId: 'topic-created',
+        );
+    _createdConversationsById[conversation.id] = conversation;
+    return conversation;
   }
 
   @override
   Future<ConversationDetail> loadConversation(String conversationId) async {
-    return const ConversationDetail(
-      conversation: Conversation(
-        id: 'conversation-1',
-        type: 'group',
-        title: 'ЕГЭ Информатика 2026',
-        topicTitle: 'Общий',
-        lastMessageSender: 'Мария',
-        lastMessagePreview: 'Пишите вопросы прямо в теме.',
-        lastMessageTime: '14:32',
-        unreadCount: 2,
-        defaultTopicId: 'topic-1',
-      ),
+    final conversation =
+        _createdConversationsById[conversationId] ??
+        _conversation(id: conversationId);
+    return ConversationDetail(
+      conversation: conversation,
       topics: [
-        TopicInfo(id: 'topic-1', title: 'Общий', unreadCount: 2, lastSeq: 2),
+        TopicInfo(
+          id: conversation.defaultTopicId ?? 'topic-1',
+          title: 'Общий',
+          unreadCount: 2,
+          lastSeq: 2,
+        ),
       ],
     );
   }

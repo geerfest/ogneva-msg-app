@@ -5,8 +5,17 @@ import 'package:ogneva_msg_app/ui/core/theme/app_colors.dart';
 import 'package:ogneva_msg_app/ui/features/auth/views/login_screen.dart';
 import 'package:ogneva_msg_app/ui/features/chats/views/chat_screen.dart';
 import 'package:ogneva_msg_app/ui/features/chats/views/chats_screen.dart';
+import 'package:ogneva_msg_app/ui/features/chats/views/create_chat_screen.dart';
 import 'package:ogneva_msg_app/ui/features/chats/views/thread_screen.dart';
 import 'package:ogneva_msg_app/ui/features/profile/views/profile_screen.dart';
+
+class AppRoutes {
+  const AppRoutes._();
+
+  static const newChat = '/chats/new';
+
+  static String chat(String conversationId) => '/chat/$conversationId';
+}
 
 class AppRouter {
   AppRouter({required AppSession session})
@@ -42,6 +51,10 @@ class AppRouter {
           GoRoute(
             path: '/chats',
             builder: (context, state) => const ChatsScreen(),
+          ),
+          GoRoute(
+            path: AppRoutes.newChat,
+            builder: (context, state) => const CreateChatScreen(),
           ),
           GoRoute(
             path: '/profile',

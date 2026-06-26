@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:ogneva_msg_app/data/repositories/chat_repository.dart';
 import 'package:ogneva_msg_app/data/services/realtime_service.dart';
 import 'package:ogneva_msg_app/domain/models/conversation.dart';
+import 'package:ogneva_msg_app/ui/core/routing/app_router.dart';
 import 'package:ogneva_msg_app/ui/core/theme/app_colors.dart';
 import 'package:ogneva_msg_app/ui/core/widgets/app_chip.dart';
 import 'package:ogneva_msg_app/ui/core/widgets/app_surface.dart';
@@ -34,7 +35,10 @@ class _ChatsContent extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       floatingActionButton: FloatingActionButton(
-        onPressed: () {},
+        tooltip: 'Создать чат',
+        onPressed: () {
+          unawaited(_openCreateChatFlow(context));
+        },
         child: const Icon(Icons.add_rounded),
       ),
       body: SafeArea(
@@ -191,8 +195,9 @@ class _ChatsContent extends StatelessWidget {
                                 isBusy: viewModel.isConversationBusy(
                                   conversation.id,
                                 ),
-                                onTap: () =>
-                                    context.push('/chat/${conversation.id}'),
+                                onTap: () => context.push(
+                                  AppRoutes.chat(conversation.id),
+                                ),
                                 onArchive: () {
                                   unawaited(
                                     _runConversationAction(
@@ -228,6 +233,15 @@ class _ChatsContent extends StatelessWidget {
       ),
     );
   }
+}
+
+Future<void> _openCreateChatFlow(BuildContext context) async {
+  final conversationId = await context.push<String>(AppRoutes.newChat);
+  if (!context.mounted || conversationId == null || conversationId.isEmpty) {
+    return;
+  }
+  unawaited(context.read<ChatsViewModel>().load());
+  context.push(AppRoutes.chat(conversationId));
 }
 
 String _emptyMessageFor(ChatsFilter filter) {

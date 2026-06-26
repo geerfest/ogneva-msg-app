@@ -134,7 +134,7 @@ Verification notes:
 
 ## CL-3 - Conversation Creation from Contact Discovery
 
-Status: `pending`
+Status: `done`
 
 Scope:
 
@@ -146,17 +146,32 @@ Scope:
 
 Acceptance:
 
-- [ ] FAB opens a create-chat flow instead of a no-op;
-- [ ] direct/support recipient choices come from `purpose=direct`;
-- [ ] group member choices come from `purpose=group_member`;
-- [ ] group title is required only when needed by backend contract;
-- [ ] duplicate direct conversation response opens the existing chat;
-- [ ] errors from product policy are shown cleanly;
-- [ ] widget tests cover at least one direct flow and one group flow.
+- [x] FAB opens a create-chat flow instead of a no-op;
+- [x] direct/support recipient choices come from `purpose=direct`;
+- [x] group member choices come from `purpose=group_member`;
+- [x] group title is required only when needed by backend contract;
+- [x] duplicate direct conversation response opens the existing chat;
+- [x] errors from product policy are shown cleanly;
+- [x] widget tests cover at least one direct flow and one group flow.
 
 Verification notes:
 
-- Pending.
+- 2026-06-26: Started implementation after checking backend
+  PRODUCT_REQUIREMENTS/API/OpenAPI for contact discovery purposes,
+  `allowed_conversation_types`, `POST /conversations`, duplicate direct
+  behavior, and group/support policy boundaries.
+- 2026-06-26: Implemented `/chats/new` create-chat flow with backend contact
+  discovery for direct/support and group-member purposes, direct/support/group
+  create actions, optional group title, returned-conversation navigation, and
+  policy-error display. Added widget tests for returned direct conversation
+  navigation, policy errors, and group creation from group-member discovery. Ran
+  `dart format .`, `flutter analyze`, and `flutter test`; analyze was clean and
+  all 33 tests passed. XcodeBuildMCP `build_run_sim` succeeded for
+  `ios/Runner.xcworkspace` / `Runner` on booted `iPhone 17` (iOS 26.5), then
+  live simulator verification passed `login -> chats -> create chat -> select
+  Dev Teacher -> open Dev Teacher / Student`; screenshot:
+  `/var/folders/c0/5zsz0jvx3ys0qdp7qjc07wnm0000gn/T/screenshot_optimized_d18f8315-10d4-4355-ad30-35b45db0b26f.jpg`.
+  The simulator app process was stopped after verification.
 
 ## CL-4 - Chat Management: Members and Topics
 
