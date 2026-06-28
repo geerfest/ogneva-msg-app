@@ -175,7 +175,7 @@ Verification notes:
 
 ## CL-4 - Chat Management: Members and Topics
 
-Status: `pending`
+Status: `done`
 
 Scope:
 
@@ -188,20 +188,35 @@ Scope:
 
 Acceptance:
 
-- [ ] conversation detail exposes members in a usable UI;
-- [ ] add/update/remove member calls the correct endpoints;
-- [ ] topic rename/archive calls `PATCH /topics/{topic_id}`;
-- [ ] archived topics cannot be used for new sends from the UI;
-- [ ] policy failures show clear messages without corrupting local state;
-- [ ] realtime member/topic/status events refresh chat detail.
+- [x] conversation detail exposes members in a usable UI;
+- [x] add/update/remove member calls the correct endpoints;
+- [x] topic rename/archive calls `PATCH /topics/{topic_id}`;
+- [x] archived topics cannot be used for new sends from the UI;
+- [x] policy failures show clear messages without corrupting local state;
+- [x] realtime member/topic/status events refresh chat detail.
 
 Verification notes:
 
-- Pending.
+- 2026-06-26: Started implementation after checking backend
+  PRODUCT_REQUIREMENTS/API/OpenAPI/REALTIME docs for member add/update/delete,
+  topic `PATCH /topics/{topic_id}`, archived-topic write blocking,
+  group-management policy, and chat-level realtime reload events.
+- 2026-06-26: Implemented the chat management sheet with members/topics tabs,
+  add/edit/remove member actions, topic rename/archive/unarchive, composer
+  blocking for archived topics and non-open conversations, clear policy errors,
+  and chat-detail reloads for member/status/topic-created realtime events.
+  Added widget coverage for member management, topic management, and policy
+  error state preservation. Ran `dart format .`, `flutter analyze`, and
+  `flutter test`; all passed. XcodeBuildMCP `build_run_sim` succeeded on
+  `ios/Runner.xcworkspace` / `Runner` / iPhone 17, verified
+  `login/restored session -> chats -> chat -> management sheet -> topics tab`,
+  captured
+  `/var/folders/c0/5zsz0jvx3ys0qdp7qjc07wnm0000gn/T/screenshot_optimized_df61b8ff-244d-4771-a9d0-88a3df6061dd.jpg`,
+  and stopped the app.
 
 ## CL-5 - Message Actions and History Pagination
 
-Status: `pending`
+Status: `done`
 
 Scope:
 
@@ -212,17 +227,30 @@ Scope:
 
 Acceptance:
 
-- [ ] own message edit uses `PATCH /messages/{message_id}`;
-- [ ] delete uses `DELETE /messages/{message_id}`;
-- [ ] realtime `message.edited` and `message.deleted` update visible topic and
+- [x] own message edit uses `PATCH /messages/{message_id}`;
+- [x] delete uses `DELETE /messages/{message_id}`;
+- [x] realtime `message.edited` and `message.deleted` update visible topic and
   thread messages;
-- [ ] older topic messages can be loaded through `next_cursor`;
-- [ ] older thread replies can be loaded through `next_cursor`;
-- [ ] widget tests cover edit/delete and older-page merge behavior.
+- [x] older topic messages can be loaded through `next_cursor`;
+- [x] older thread replies can be loaded through `next_cursor`;
+- [x] widget tests cover edit/delete and older-page merge behavior.
 
 Verification notes:
 
-- Pending.
+- 2026-06-28: Started implementation after checking backend
+  PRODUCT_REQUIREMENTS/API/OpenAPI/REALTIME docs for opaque message cursors,
+  `PATCH /messages/{message_id}`, `DELETE /messages/{message_id}`,
+  soft-delete tombstones, and `message.edited` / `message.deleted` payloads.
+- 2026-06-28: Implemented topic/thread `next_cursor` state, older-history
+  merge without duplicates, own-message edit/delete actions, soft-delete
+  tombstones, edited/deleted labels, and realtime patch/delete handling for
+  visible topic and thread messages. Added widget coverage for message
+  edit/delete, topic history cursor merge, and thread reply cursor/realtime
+  tombstones. Ran `dart format .`, `flutter analyze`, and `flutter test`; all
+  passed. XcodeBuildMCP `build_run_sim` succeeded on
+  `ios/Runner.xcworkspace` / `Runner` / iPhone 17 (iOS 26.5), screenshot:
+  `/var/folders/c0/5zsz0jvx3ys0qdp7qjc07wnm0000gn/T/screenshot_optimized_6ed6a32e-157e-4cfb-ab9b-c170d688707a.jpg`.
+  The simulator app process was stopped after verification.
 
 ## CL-6 - Realtime Invalidation and Contact Refresh
 

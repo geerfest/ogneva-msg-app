@@ -30,17 +30,23 @@ class ThreadViewModel extends ChangeNotifier {
 
   bool _isLoading = false;
   bool _isSending = false;
+  bool _isLoadingOlderReplies = false;
+  bool _isMutatingMessage = false;
   String? _errorMessage;
   String? _typingLabel;
   ChatMessage? _rootMessage;
   List<ChatMessage> _replies = const <ChatMessage>[];
+  String? _repliesNextCursor;
 
   bool get isLoading => _isLoading;
   bool get isSending => _isSending;
+  bool get isLoadingOlderReplies => _isLoadingOlderReplies;
+  bool get isMutatingMessage => _isMutatingMessage;
   String? get errorMessage => _errorMessage;
   String? get typingLabel => _typingLabel;
   ChatMessage? get rootMessage => _rootMessage;
   List<ChatMessage> get replies => _replies;
+  bool get hasOlderReplies => _repliesNextCursor != null;
 
   Future<void> load() async {
     _isLoading = _replies.isEmpty;
@@ -52,6 +58,7 @@ class ThreadViewModel extends ChangeNotifier {
       unawaited(_realtimeService.subscribeThread(_threadId));
       final page = await _chatRepository.listThreadMessages(_threadId);
       _replies = sortChatMessagesAscending(page.items);
+      _repliesNextCursor = page.nextCursor;
     } on SessionExpiredException {
       _errorMessage = 'Сессия истекла. Войдите заново.';
     } on ApiException catch (error) {
@@ -104,6 +111,109 @@ class ThreadViewModel extends ChangeNotifier {
       return false;
     } finally {
       _isSending = false;
+      notifyListeners();
+    }
+  }
+
+  bool canEditMessage(ChatMessage message) {
+    return message.isMine &&
+        !message.isPending &&
+        !message.isFailed &&
+        message.deletedAt == null;
+  }
+
+  bool canDeleteMessage(ChatMessage message) {
+    return message.isMine &&
+        !message.isPending &&
+        !message.isFailed &&
+        message.deletedAt == null;
+  }
+
+  Future<bool> editMessage(ChatMessage message, String rawBody) async {
+    final body = rawBody.trim();
+    if (!canEditMessage(message) ||
+        body.isEmpty ||
+        body.length > 4000 ||
+        _isMutatingMessage) {
+      return false;
+    }
+    _isMutatingMessage = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final edited = await _chatRepository.editMessage(
+        messageId: message.id,
+        body: body,
+      );
+      _upsertReply(_preserveReplyThreadState(message, edited));
+      return true;
+    } on SessionExpiredException {
+      _errorMessage = 'Сессия истекла. Войдите заново.';
+      return false;
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+      return false;
+    } catch (_) {
+      _errorMessage = 'Не получилось изменить ответ';
+      return false;
+    } finally {
+      _isMutatingMessage = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> deleteMessage(ChatMessage message) async {
+    if (!canDeleteMessage(message) || _isMutatingMessage) {
+      return false;
+    }
+    _isMutatingMessage = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final deletion = await _chatRepository.deleteMessage(message.id);
+      _applyReplyDeletion(deletion.id, deletion.deletedAt);
+      return true;
+    } on SessionExpiredException {
+      _errorMessage = 'Сессия истекла. Войдите заново.';
+      return false;
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+      return false;
+    } catch (_) {
+      _errorMessage = 'Не получилось удалить ответ';
+      return false;
+    } finally {
+      _isMutatingMessage = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadOlderReplies() async {
+    final cursor = _repliesNextCursor;
+    if (cursor == null || _isLoadingOlderReplies) {
+      return;
+    }
+    _isLoadingOlderReplies = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final page = await _chatRepository.listThreadMessages(
+        _threadId,
+        cursor: cursor,
+      );
+      _replies = _mergeReplies(_replies, page.items);
+      _repliesNextCursor = page.nextCursor;
+    } on SessionExpiredException {
+      _errorMessage = 'Сессия истекла. Войдите заново.';
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+    } catch (_) {
+      _errorMessage = 'Не получилось загрузить историю';
+    } finally {
+      _isLoadingOlderReplies = false;
       notifyListeners();
     }
   }
@@ -173,29 +283,89 @@ class ThreadViewModel extends ChangeNotifier {
   void _editMessage(Map<String, dynamic> data) {
     final messageId = data['message_id'] as String?;
     final body = data['body'] as String?;
-    if (messageId == null || body == null) {
+    if (messageId == null || body == null || data['thread_id'] != _threadId) {
       return;
     }
+    final editedAt = _optionalDateTime(data['edited_at']);
     _replies = [
       for (final reply in _replies)
-        if (reply.id == messageId) reply.copyWith(body: body) else reply,
+        if (reply.id == messageId)
+          reply.copyWith(body: body, editedAt: editedAt)
+        else
+          reply,
     ];
     notifyListeners();
   }
 
   void _deleteMessage(Map<String, dynamic> data) {
     final messageId = data['message_id'] as String?;
-    if (messageId == null) {
+    if (messageId == null || data['thread_id'] != _threadId) {
       return;
     }
+    _applyReplyDeletion(messageId, _optionalDateTime(data['deleted_at']));
+    notifyListeners();
+  }
+
+  void _applyReplyDeletion(String messageId, DateTime? deletedAt) {
     _replies = [
       for (final reply in _replies)
         if (reply.id == messageId)
-          reply.copyWith(body: 'Сообщение удалено')
+          reply.copyWith(
+            body: 'Сообщение удалено',
+            deletedAt: deletedAt ?? reply.deletedAt ?? DateTime.now(),
+          )
         else
           reply,
     ];
-    notifyListeners();
+  }
+
+  ChatMessage _preserveReplyThreadState(
+    ChatMessage previous,
+    ChatMessage updated,
+  ) {
+    return updated.copyWith(
+      threadId: updated.threadId ?? previous.threadId ?? _threadId,
+    );
+  }
+
+  List<ChatMessage> _mergeReplies(
+    List<ChatMessage> existing,
+    List<ChatMessage> incoming,
+  ) {
+    var merged = existing;
+    for (final reply in incoming) {
+      final byId = merged.indexWhere((item) => item.id == reply.id);
+      if (byId != -1) {
+        merged = [
+          ...merged.take(byId),
+          _preserveReplyThreadState(merged[byId], reply),
+          ...merged.skip(byId + 1),
+        ];
+        continue;
+      }
+      final byClientId = reply.clientMessageId == null
+          ? -1
+          : merged.indexWhere(
+              (item) => item.clientMessageId == reply.clientMessageId,
+            );
+      if (byClientId != -1) {
+        merged = [
+          ...merged.take(byClientId),
+          _preserveReplyThreadState(merged[byClientId], reply),
+          ...merged.skip(byClientId + 1),
+        ];
+        continue;
+      }
+      merged = [...merged, reply];
+    }
+    return sortChatMessagesAscending(merged);
+  }
+
+  DateTime? _optionalDateTime(Object? raw) {
+    if (raw is! String || raw.isEmpty) {
+      return null;
+    }
+    return DateTime.tryParse(raw);
   }
 
   void _handleTypingEvent(RealtimeEvent event) {

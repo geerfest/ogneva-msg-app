@@ -535,7 +535,7 @@ void main() {
     expect(chat.createdThreadRootIds, contains('message-1'));
   });
 
-  testWidgets('chat screen creates and selects a topic', (
+  testWidgets('chat message actions edit and soft-delete own message', (
     WidgetTester tester,
   ) async {
     final chat = _FakeChatRepository();
@@ -555,6 +555,256 @@ void main() {
     await tester.tap(find.text('ЕГЭ Информатика 2026'));
     await tester.pumpAndSettle();
 
+    await tester.tap(find.byKey(const Key('message_actions_message-2')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Редактировать'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('message_edit_input')),
+      'Спасибо, поправил',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('message_edit_submit_button')));
+    await tester.pumpAndSettle();
+
+    expect(chat.editedMessageRequests, hasLength(1));
+    expect(chat.editedMessageRequests.single.messageId, 'message-2');
+    expect(chat.editedMessageRequests.single.body, 'Спасибо, поправил');
+    expect(find.text('Спасибо, поправил'), findsOneWidget);
+    expect(find.text('Изменено'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('message_actions_message-2')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Удалить'));
+    await tester.pumpAndSettle();
+
+    expect(chat.deletedMessageIds, ['message-2']);
+    expect(find.text('Сообщение удалено'), findsOneWidget);
+    expect(find.text('Удалено'), findsOneWidget);
+    expect(find.byKey(const Key('message_actions_message-2')), findsNothing);
+  });
+
+  testWidgets('chat realtime edit and delete update visible topic messages', (
+    WidgetTester tester,
+  ) async {
+    final realtime = _FakeRealtimeService();
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(),
+        chatRepository: _FakeChatRepository(),
+        realtimeService: realtime,
+        restoreOnStart: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('login_button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ЕГЭ Информатика 2026'));
+    await tester.pumpAndSettle();
+
+    realtime.emit(
+      'message.edited',
+      data: const {
+        'message_id': 'message-2',
+        'topic_id': 'topic-1',
+        'thread_id': null,
+        'body': 'Правка из realtime',
+        'edited_at': '2026-06-23T14:50:00Z',
+      },
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Правка из realtime'), findsOneWidget);
+    expect(find.text('Изменено'), findsOneWidget);
+
+    realtime.emit(
+      'message.deleted',
+      data: const {
+        'message_id': 'message-2',
+        'topic_id': 'topic-1',
+        'thread_id': null,
+        'deleted_at': '2026-06-23T14:51:00Z',
+      },
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Сообщение удалено'), findsOneWidget);
+    expect(find.text('Удалено'), findsOneWidget);
+  });
+
+  testWidgets('chat older topic messages merge by cursor without duplicates', (
+    WidgetTester tester,
+  ) async {
+    final chat = _FakeChatRepository(
+      topicMessagePages: {
+        'topic-1': [
+          MessagePage(
+            items: [
+              _message(id: 'message-2', body: 'Среднее', seq: 2),
+              _message(id: 'message-3', body: 'Новое', seq: 3),
+            ],
+            nextCursor: 'topic-cursor-1',
+          ),
+          MessagePage(
+            items: [
+              _message(id: 'message-1', body: 'Старое', seq: 1),
+              _message(id: 'message-2', body: 'Среднее', seq: 2),
+            ],
+          ),
+        ],
+      },
+    );
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(),
+        chatRepository: chat,
+        realtimeService: _FakeRealtimeService(),
+        restoreOnStart: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('login_button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ЕГЭ Информатика 2026'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Старое'), findsNothing);
+    expect(
+      find.byKey(const Key('chat_load_older_messages_button')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('chat_load_older_messages_button')));
+    await tester.pumpAndSettle();
+
+    expect(chat.listMessageCursors, [null, 'topic-cursor-1']);
+    expect(find.text('Старое'), findsOneWidget);
+    expect(find.text('Среднее'), findsOneWidget);
+    expect(find.text('Новое'), findsOneWidget);
+
+    final oldTop = tester.getTopLeft(find.text('Старое'));
+    final middleTop = tester.getTopLeft(find.text('Среднее'));
+    final newTop = tester.getTopLeft(find.text('Новое'));
+
+    expect(oldTop.dy, lessThan(middleTop.dy));
+    expect(middleTop.dy, lessThan(newTop.dy));
+  });
+
+  testWidgets('thread older replies merge and realtime tombstones replies', (
+    WidgetTester tester,
+  ) async {
+    final realtime = _FakeRealtimeService();
+    final chat = _FakeChatRepository(
+      threadMessagePages: {
+        'thread-1': [
+          MessagePage(
+            items: [
+              _message(
+                id: 'reply-2',
+                body: 'Новый ответ',
+                seq: 2,
+                threadId: 'thread-1',
+                isMine: true,
+              ),
+            ],
+            nextCursor: 'thread-cursor-1',
+          ),
+          MessagePage(
+            items: [
+              _message(
+                id: 'reply-1',
+                body: 'Старый ответ',
+                seq: 1,
+                threadId: 'thread-1',
+              ),
+              _message(
+                id: 'reply-2',
+                body: 'Новый ответ',
+                seq: 2,
+                threadId: 'thread-1',
+                isMine: true,
+              ),
+            ],
+          ),
+        ],
+      },
+    );
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(),
+        chatRepository: chat,
+        realtimeService: realtime,
+        restoreOnStart: false,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('login_button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ЕГЭ Информатика 2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('2 ответа'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('thread_load_older_replies_button')));
+    await tester.pumpAndSettle();
+
+    expect(chat.listThreadCursors, [null, 'thread-cursor-1']);
+    expect(find.text('Старый ответ'), findsOneWidget);
+    expect(find.text('Новый ответ'), findsOneWidget);
+
+    realtime.emit(
+      'message.edited',
+      data: const {
+        'message_id': 'reply-2',
+        'topic_id': 'topic-1',
+        'thread_id': 'thread-1',
+        'body': 'Ответ поправлен',
+        'edited_at': '2026-06-23T14:52:00Z',
+      },
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ответ поправлен'), findsOneWidget);
+    expect(find.text('Изменено'), findsOneWidget);
+
+    realtime.emit(
+      'message.deleted',
+      data: const {
+        'message_id': 'reply-2',
+        'topic_id': 'topic-1',
+        'thread_id': 'thread-1',
+        'deleted_at': '2026-06-23T14:53:00Z',
+      },
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Сообщение удалено'), findsOneWidget);
+    expect(find.text('Удалено'), findsOneWidget);
+  });
+
+  testWidgets('chat screen creates and selects a topic', (
+    WidgetTester tester,
+  ) async {
+    final chat = _FakeChatRepository();
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(restoreUser: _admin),
+        chatRepository: chat,
+        realtimeService: _FakeRealtimeService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('ЕГЭ Информатика 2026'));
+    await tester.pumpAndSettle();
+
     await tester.tap(find.byTooltip('Создать тему'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).last, 'Домашка');
@@ -566,7 +816,211 @@ void main() {
     expect(find.text('Сообщений пока нет'), findsOneWidget);
     expect(chat.createdTopicTitles, contains('Домашка'));
   });
+
+  testWidgets('chat management adds updates and removes group members', (
+    WidgetTester tester,
+  ) async {
+    final chat = _FakeChatRepository(
+      conversationDetail: _conversation(),
+      members: const [
+        ConversationMember(
+          userId: _adminUserId,
+          displayName: 'Dev Admin',
+          memberRole: 'owner',
+          canWrite: true,
+          muted: false,
+        ),
+        ConversationMember(
+          userId: 'teacher-1',
+          displayName: 'Мария Учитель',
+          memberRole: 'member',
+          canWrite: true,
+          muted: false,
+        ),
+      ],
+      groupContacts: const [
+        Contact(
+          id: 'student-2',
+          role: 'student',
+          displayName: 'Новый студент',
+          email: 'new-student@example.com',
+          allowedConversationTypes: ['group'],
+          reason: 'group_allowed',
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(restoreUser: _admin),
+        chatRepository: chat,
+        realtimeService: _FakeRealtimeService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('ЕГЭ Информатика 2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('chat_management_button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Участники'), findsOneWidget);
+    expect(find.text('Dev Admin'), findsOneWidget);
+    expect(find.text('Мария Учитель'), findsOneWidget);
+    expect(find.textContaining('может писать'), findsWidgets);
+
+    await tester.tap(find.byKey(const Key('add_member_button')));
+    await tester.pumpAndSettle();
+    expect(chat.contactPurposes, contains('group_member'));
+
+    await tester.tap(find.text('Новый студент'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('add_member_submit_button')));
+    await tester.pumpAndSettle();
+
+    expect(chat.addedMemberRequests, hasLength(1));
+    expect(chat.addedMemberRequests.single.userId, 'student-2');
+    expect(find.text('Новый студент'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('member_menu_teacher-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Настроить'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Может писать'));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('edit_member_submit_button')));
+    await tester.pumpAndSettle();
+
+    expect(chat.updatedMemberRequests, hasLength(1));
+    expect(chat.updatedMemberRequests.single.userId, 'teacher-1');
+    expect(chat.updatedMemberRequests.single.canWrite, isFalse);
+    expect(find.textContaining('только чтение'), findsWidgets);
+
+    await tester.tap(find.byKey(const Key('member_menu_teacher-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Удалить'));
+    await tester.pumpAndSettle();
+
+    expect(chat.removedMemberIds, ['teacher-1']);
+    expect(find.text('Мария Учитель'), findsNothing);
+  });
+
+  testWidgets('chat management renames and archives topics', (
+    WidgetTester tester,
+  ) async {
+    final chat = _FakeChatRepository(
+      conversationDetail: _conversation(),
+      members: const [
+        ConversationMember(
+          userId: _adminUserId,
+          displayName: 'Dev Admin',
+          memberRole: 'owner',
+          canWrite: true,
+          muted: false,
+        ),
+      ],
+      topics: const [
+        TopicInfo(id: 'topic-1', title: 'Общий', unreadCount: 0, lastSeq: 2),
+      ],
+    );
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(restoreUser: _admin),
+        chatRepository: chat,
+        realtimeService: _FakeRealtimeService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('ЕГЭ Информатика 2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('chat_management_button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('chat_management_topics_tab')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('topic_menu_topic-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Переименовать'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('topic_rename_input')),
+      'Разбор',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('topic_rename_submit_button')));
+    await tester.pumpAndSettle();
+
+    expect(chat.updatedTopicRequests, hasLength(1));
+    expect(chat.updatedTopicRequests.single.title, 'Разбор');
+    expect(find.text('Разбор'), findsWidgets);
+
+    await tester.tap(find.byKey(const Key('topic_menu_topic-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('В архив'));
+    await tester.pumpAndSettle();
+
+    expect(chat.updatedTopicRequests, hasLength(2));
+    expect(chat.updatedTopicRequests.last.isArchived, isTrue);
+    expect(find.textContaining('Разбор · архив'), findsWidgets);
+
+    await tester.tap(find.byIcon(Icons.close_rounded));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Тема в архиве'), findsWidgets);
+    final composer = tester.widget<TextField>(find.byType(TextField).last);
+    expect(composer.enabled, isFalse);
+  });
+
+  testWidgets('chat management policy errors keep topic state unchanged', (
+    WidgetTester tester,
+  ) async {
+    final chat = _FakeChatRepository(
+      conversationDetail: _conversation(),
+      members: const [
+        ConversationMember(
+          userId: _adminUserId,
+          displayName: 'Dev Admin',
+          memberRole: 'owner',
+          canWrite: true,
+          muted: false,
+        ),
+      ],
+      updateTopicError: const ApiException(
+        statusCode: 403,
+        code: 'permission_denied',
+        message: 'Недостаточно прав',
+        details: <String, dynamic>{},
+      ),
+    );
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(restoreUser: _admin),
+        chatRepository: chat,
+        realtimeService: _FakeRealtimeService(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('ЕГЭ Информатика 2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('chat_management_button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('chat_management_topics_tab')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('topic_menu_topic-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('В архив'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Недостаточно прав'), findsWidgets);
+    expect(find.textContaining('Общий · архив'), findsNothing);
+  });
 }
+
+const _adminUserId = '00000000-0000-0000-0000-000000000002';
 
 const _student = AppUser(
   id: '00000000-0000-0000-0000-000000000004',
@@ -577,7 +1031,7 @@ const _student = AppUser(
 );
 
 const _admin = AppUser(
-  id: '00000000-0000-0000-0000-000000000002',
+  id: _adminUserId,
   role: 'admin',
   displayName: 'Dev Admin',
   email: 'admin@example.com',
@@ -606,6 +1060,31 @@ Conversation _conversation({
   );
 }
 
+ChatMessage _message({
+  required String id,
+  required String body,
+  required int seq,
+  String conversationId = 'conversation-1',
+  String topicId = 'topic-1',
+  String? threadId,
+  bool isMine = false,
+}) {
+  final createdAt = DateTime.utc(2026, 6, 23, 14, 30 + seq);
+  return ChatMessage(
+    id: id,
+    conversationId: conversationId,
+    topicId: topicId,
+    threadId: threadId,
+    senderName: isMine ? 'Вы' : 'Мария',
+    body: body,
+    time: '14:${(30 + seq).toString().padLeft(2, '0')}',
+    isMine: isMine,
+    seq: seq,
+    createdAt: createdAt,
+    readLabel: isMine ? 'Отправлено' : null,
+  );
+}
+
 class _CreatedConversationRequest {
   const _CreatedConversationRequest({
     required this.type,
@@ -616,6 +1095,39 @@ class _CreatedConversationRequest {
   final String type;
   final List<String> memberIds;
   final String? title;
+}
+
+class _MemberRequest {
+  const _MemberRequest({
+    required this.conversationId,
+    required this.userId,
+    this.memberRole,
+    this.canWrite,
+  });
+
+  final String conversationId;
+  final String userId;
+  final String? memberRole;
+  final bool? canWrite;
+}
+
+class _TopicUpdateRequest {
+  const _TopicUpdateRequest({
+    required this.topicId,
+    this.title,
+    this.isArchived,
+  });
+
+  final String topicId;
+  final String? title;
+  final bool? isArchived;
+}
+
+class _MessageEditRequest {
+  const _MessageEditRequest({required this.messageId, required this.body});
+
+  final String messageId;
+  final String body;
 }
 
 class _FakeAuthRepository implements AuthRepository {
@@ -668,13 +1180,45 @@ class _FakeChatRepository implements ChatRepository {
     this.hasExistingThread = true,
     this.messagesNewestFirst = false,
     Map<String, List<ConversationPage>>? conversationPagesByFilter,
+    Map<String, List<MessagePage>>? topicMessagePages,
+    Map<String, List<MessagePage>>? threadMessagePages,
     List<Contact>? directContacts,
     List<Contact>? groupContacts,
+    Conversation? conversationDetail,
+    List<TopicInfo>? topics,
+    List<ConversationMember>? members,
     this.createConversationResponse,
     this.createConversationError,
+    this.updateTopicError,
   }) : conversationPagesByFilter =
            conversationPagesByFilter ??
            const <String, List<ConversationPage>>{},
+       topicMessagePages =
+           topicMessagePages ?? const <String, List<MessagePage>>{},
+       threadMessagePages =
+           threadMessagePages ?? const <String, List<MessagePage>>{},
+       conversationDetail = conversationDetail ?? _conversation(),
+       topics =
+           topics ??
+           const [
+             TopicInfo(
+               id: 'topic-1',
+               title: 'Общий',
+               unreadCount: 2,
+               lastSeq: 2,
+             ),
+           ],
+       members =
+           members ??
+           const [
+             ConversationMember(
+               userId: 'teacher-1',
+               displayName: 'Мария',
+               memberRole: 'member',
+               canWrite: true,
+               muted: false,
+             ),
+           ],
        directContacts =
            directContacts ??
            const [
@@ -703,21 +1247,39 @@ class _FakeChatRepository implements ChatRepository {
   final bool hasExistingThread;
   final bool messagesNewestFirst;
   final Map<String, List<ConversationPage>> conversationPagesByFilter;
+  final Map<String, List<MessagePage>> topicMessagePages;
+  final Map<String, List<MessagePage>> threadMessagePages;
   final List<Contact> directContacts;
   final List<Contact> groupContacts;
+  Conversation conversationDetail;
+  List<TopicInfo> topics;
+  List<ConversationMember> members;
   final Conversation? createConversationResponse;
   final ApiException? createConversationError;
+  final ApiException? updateTopicError;
   final sentTopicMessages = <String>[];
   final sentThreadMessages = <String>[];
   final createdThreadRootIds = <String>[];
   final createdTopicTitles = <String>[];
   final createdConversationRequests = <_CreatedConversationRequest>[];
+  final addedMemberRequests = <_MemberRequest>[];
+  final updatedMemberRequests = <_MemberRequest>[];
+  final removedMemberIds = <String>[];
+  final updatedTopicRequests = <_TopicUpdateRequest>[];
+  final editedMessageRequests = <_MessageEditRequest>[];
+  final deletedMessageIds = <String>[];
   final contactPurposes = <String>[];
   final listConversationFilters = <String>[];
   final listConversationCursors = <String?>[];
+  final listMessageTopicIds = <String>[];
+  final listMessageCursors = <String?>[];
+  final listThreadIds = <String>[];
+  final listThreadCursors = <String?>[];
   final archivedConversationIds = <String>[];
   final unarchivedConversationIds = <String>[];
   final _conversationPageIndexByFilter = <String, int>{};
+  final _messagePageIndexByTopic = <String, int>{};
+  final _threadPageIndexByThread = <String, int>{};
   final _createdConversationsById = <String, Conversation>{};
   final _rootByThread = <String, ChatMessage>{};
 
@@ -788,17 +1350,13 @@ class _FakeChatRepository implements ChatRepository {
   Future<ConversationDetail> loadConversation(String conversationId) async {
     final conversation =
         _createdConversationsById[conversationId] ??
-        _conversation(id: conversationId);
+        (conversationDetail.id == conversationId
+            ? conversationDetail
+            : _conversation(id: conversationId));
     return ConversationDetail(
       conversation: conversation,
-      topics: [
-        TopicInfo(
-          id: conversation.defaultTopicId ?? 'topic-1',
-          title: 'Общий',
-          unreadCount: 2,
-          lastSeq: 2,
-        ),
-      ],
+      topics: topics,
+      members: members,
     );
   }
 
@@ -809,13 +1367,33 @@ class _FakeChatRepository implements ChatRepository {
     String memberRole = 'member',
     bool? canWrite,
   }) async {
-    return ConversationMember(
+    addedMemberRequests.add(
+      _MemberRequest(
+        conversationId: conversationId,
+        userId: userId,
+        memberRole: memberRole,
+        canWrite: canWrite,
+      ),
+    );
+    final contact = groupContacts.firstWhere(
+      (item) => item.id == userId,
+      orElse: () => Contact(
+        id: userId,
+        role: 'student',
+        displayName: 'Иван',
+        allowedConversationTypes: const ['group'],
+        reason: 'group_allowed',
+      ),
+    );
+    final member = ConversationMember(
       userId: userId,
-      displayName: 'Иван',
+      displayName: contact.displayName,
       memberRole: memberRole,
       canWrite: canWrite ?? true,
       muted: false,
     );
+    members = [...members.where((item) => item.userId != userId), member];
+    return member;
   }
 
   @override
@@ -825,20 +1403,48 @@ class _FakeChatRepository implements ChatRepository {
     String? memberRole,
     bool? canWrite,
   }) async {
-    return ConversationMember(
-      userId: userId,
-      displayName: 'Иван',
-      memberRole: memberRole ?? 'member',
-      canWrite: canWrite ?? true,
-      muted: false,
+    updatedMemberRequests.add(
+      _MemberRequest(
+        conversationId: conversationId,
+        userId: userId,
+        memberRole: memberRole,
+        canWrite: canWrite,
+      ),
     );
+    final existing = members.firstWhere(
+      (item) => item.userId == userId,
+      orElse: () => ConversationMember(
+        userId: userId,
+        displayName: 'Иван',
+        memberRole: 'member',
+        canWrite: true,
+        muted: false,
+      ),
+    );
+    final updated = ConversationMember(
+      userId: userId,
+      displayName: existing.displayName,
+      memberRole: memberRole ?? existing.memberRole,
+      canWrite: canWrite ?? existing.canWrite,
+      muted: existing.muted,
+    );
+    members = [
+      for (final member in members)
+        if (member.userId == userId) updated else member,
+    ];
+    return updated;
   }
 
   @override
   Future<void> removeMember({
     required String conversationId,
     required String userId,
-  }) async {}
+  }) async {
+    removedMemberIds.add(userId);
+    members = members
+        .where((member) => member.userId != userId)
+        .toList(growable: false);
+  }
 
   @override
   Future<void> archiveConversation(String conversationId) async {
@@ -852,6 +1458,16 @@ class _FakeChatRepository implements ChatRepository {
 
   @override
   Future<MessagePage> listMessages(String topicId, {String? cursor}) async {
+    listMessageTopicIds.add(topicId);
+    listMessageCursors.add(cursor);
+
+    final pages = topicMessagePages[topicId];
+    if (pages != null && pages.isNotEmpty) {
+      final index = _messagePageIndexByTopic[topicId] ?? 0;
+      _messagePageIndexByTopic[topicId] = index + 1;
+      return pages[index < pages.length ? index : pages.length - 1];
+    }
+
     final root = ChatMessage(
       id: 'message-1',
       conversationId: 'conversation-1',
@@ -889,6 +1505,16 @@ class _FakeChatRepository implements ChatRepository {
     String threadId, {
     String? cursor,
   }) async {
+    listThreadIds.add(threadId);
+    listThreadCursors.add(cursor);
+
+    final pages = threadMessagePages[threadId];
+    if (pages != null && pages.isNotEmpty) {
+      final index = _threadPageIndexByThread[threadId] ?? 0;
+      _threadPageIndexByThread[threadId] = index + 1;
+      return pages[index < pages.length ? index : pages.length - 1];
+    }
+
     return const MessagePage(
       items: [
         ChatMessage(
@@ -909,13 +1535,35 @@ class _FakeChatRepository implements ChatRepository {
     String? title,
     bool? isArchived,
   }) async {
-    return TopicInfo(
-      id: topicId,
-      conversationId: 'conversation-1',
-      title: title ?? 'Общий',
-      unreadCount: 0,
-      isArchived: isArchived ?? false,
+    updatedTopicRequests.add(
+      _TopicUpdateRequest(
+        topicId: topicId,
+        title: title,
+        isArchived: isArchived,
+      ),
     );
+    if (updateTopicError != null) {
+      throw updateTopicError!;
+    }
+    final existing = topics.firstWhere(
+      (topic) => topic.id == topicId,
+      orElse: () => TopicInfo(id: topicId, title: 'Общий', unreadCount: 0),
+    );
+    final updated = TopicInfo(
+      id: existing.id,
+      conversationId: existing.conversationId,
+      title: title ?? existing.title,
+      unreadCount: existing.unreadCount,
+      kind: existing.kind,
+      isArchived: isArchived ?? existing.isArchived,
+      lastSeq: existing.lastSeq,
+      lastReadSeq: existing.lastReadSeq,
+    );
+    topics = [
+      for (final topic in topics)
+        if (topic.id == topicId) updated else topic,
+    ];
+    return updated;
   }
 
   @override
@@ -923,17 +1571,25 @@ class _FakeChatRepository implements ChatRepository {
     required String messageId,
     required String body,
   }) async {
+    editedMessageRequests.add(
+      _MessageEditRequest(messageId: messageId, body: body),
+    );
     return ChatMessage(
       id: messageId,
+      conversationId: 'conversation-1',
+      topicId: 'topic-1',
+      threadId: messageId.startsWith('reply-') ? 'thread-1' : null,
       senderName: 'Вы',
       body: body,
       time: '14:45',
       isMine: true,
+      editedAt: DateTime.utc(2026, 6, 23, 14, 45),
     );
   }
 
   @override
   Future<MessageDeletion> deleteMessage(String messageId) async {
+    deletedMessageIds.add(messageId);
     return MessageDeletion(
       id: messageId,
       deletedAt: DateTime.utc(2026, 6, 23, 14, 46),

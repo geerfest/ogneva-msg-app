@@ -6,6 +6,7 @@ import 'package:ogneva_msg_app/data/repositories/auth_repository.dart';
 import 'package:ogneva_msg_app/data/repositories/chat_repository.dart';
 import 'package:ogneva_msg_app/data/services/messenger_api_client.dart';
 import 'package:ogneva_msg_app/data/services/realtime_service.dart';
+import 'package:ogneva_msg_app/domain/models/contact.dart';
 import 'package:ogneva_msg_app/domain/models/conversation.dart';
 import 'package:ogneva_msg_app/domain/models/message.dart';
 import 'package:uuid/uuid.dart';
@@ -36,27 +37,128 @@ class ChatViewModel extends ChangeNotifier {
   bool _isLoading = false;
   bool _isSending = false;
   bool _isCreatingTopic = false;
+  bool _isUpdatingTopic = false;
+  bool _isManagingMembers = false;
+  bool _isLoadingMemberCandidates = false;
+  bool _isLoadingOlderMessages = false;
+  bool _isMutatingMessage = false;
   bool _isOpeningThread = false;
   String? _errorMessage;
   String? _typingLabel;
   Conversation? _conversation;
   List<TopicInfo> _topics = const <TopicInfo>[];
+  List<ConversationMember> _members = const <ConversationMember>[];
+  List<Contact> _memberCandidates = const <Contact>[];
   TopicInfo? _selectedTopic;
   List<ChatMessage> _messages = const <ChatMessage>[];
+  String? _messagesNextCursor;
   bool _typingStartedSent = false;
 
   bool get isLoading => _isLoading;
   bool get isSending => _isSending;
   bool get isCreatingTopic => _isCreatingTopic;
+  bool get isUpdatingTopic => _isUpdatingTopic;
+  bool get isManagingMembers => _isManagingMembers;
+  bool get isLoadingMemberCandidates => _isLoadingMemberCandidates;
+  bool get isLoadingOlderMessages => _isLoadingOlderMessages;
+  bool get isMutatingMessage => _isMutatingMessage;
   bool get isOpeningThread => _isOpeningThread;
   String? get errorMessage => _errorMessage;
   String? get typingLabel => _typingLabel;
   Conversation? get conversation => _conversation;
   List<TopicInfo> get topics => _topics;
+  List<ConversationMember> get members => _members;
   TopicInfo? get selectedTopic => _selectedTopic;
   List<ChatMessage> get messages => _messages;
+  bool get hasOlderMessages => _messagesNextCursor != null;
+  String? get currentUserId => _authRepository.currentUser?.id;
+  String? get currentUserRole => _authRepository.currentUser?.role;
+
+  List<Contact> get memberCandidates {
+    final activeMemberIds = _members
+        .where((member) => member.isActive)
+        .map((member) => member.userId)
+        .toSet();
+    return _memberCandidates
+        .where(
+          (contact) =>
+              contact.allowsConversationType('group') &&
+              !activeMemberIds.contains(contact.id),
+        )
+        .toList(growable: false);
+  }
+
+  bool get canManageMembers {
+    final conversation = _conversation;
+    if (conversation == null ||
+        conversation.type != 'group' ||
+        conversation.status != 'open') {
+      return false;
+    }
+    if (_isGlobalAdmin) {
+      return true;
+    }
+    return currentUserRole == 'teacher' && _currentMemberCanManage;
+  }
+
+  bool get canCreateTopic {
+    final conversation = _conversation;
+    if (conversation == null || conversation.status != 'open') {
+      return false;
+    }
+    if (_isGlobalAdmin &&
+        (conversation.type == 'group' || conversation.type == 'support')) {
+      return true;
+    }
+    return currentUserRole == 'teacher' &&
+        conversation.type == 'group' &&
+        (_currentMember?.canWrite ?? false);
+  }
+
+  bool get canManageTopics {
+    final conversation = _conversation;
+    if (conversation == null || conversation.status != 'open') {
+      return false;
+    }
+    if (_isGlobalAdmin &&
+        (conversation.type == 'group' || conversation.type == 'support')) {
+      return true;
+    }
+    return currentUserRole == 'teacher' &&
+        conversation.type == 'group' &&
+        _currentMemberCanManage;
+  }
+
+  bool get canUseComposer {
+    final topic = _selectedTopic;
+    return topic != null &&
+        !topic.isArchived &&
+        _conversation?.status == 'open';
+  }
+
+  String get composerPlaceholder {
+    final topic = _selectedTopic;
+    if (topic == null) {
+      return 'Нет доступной темы';
+    }
+    if (topic.isArchived) {
+      return 'Тема в архиве';
+    }
+    if (_conversation?.status != 'open') {
+      return 'Чат закрыт';
+    }
+    return 'Сообщение';
+  }
+
+  List<String> get memberRoleOptions {
+    if (_isGlobalAdmin) {
+      return const ['owner', 'admin', 'moderator', 'member', 'readonly'];
+    }
+    return const ['member', 'readonly'];
+  }
 
   Future<void> load() async {
+    final previousSelectedTopicId = _selectedTopic?.id;
     _isLoading = _conversation == null;
     _errorMessage = null;
     notifyListeners();
@@ -65,7 +167,10 @@ class ChatViewModel extends ChangeNotifier {
       final detail = await _chatRepository.loadConversation(_conversationId);
       _conversation = detail.conversation;
       _topics = detail.topics;
-      _selectedTopic ??= _selectInitialTopic(detail);
+      _members = detail.members.isNotEmpty
+          ? detail.members
+          : detail.conversation.members;
+      _selectedTopic = _selectTopicAfterLoad(detail, previousSelectedTopicId);
       unawaited(_realtimeService.subscribeConversation(_conversationId));
       for (final topic in _topics) {
         unawaited(_realtimeService.subscribeTopic(topic.id));
@@ -89,6 +194,7 @@ class ChatViewModel extends ChangeNotifier {
     }
     _selectedTopic = topic;
     _messages = const <ChatMessage>[];
+    _messagesNextCursor = null;
     _typingLabel = null;
     _errorMessage = null;
     notifyListeners();
@@ -98,7 +204,10 @@ class ChatViewModel extends ChangeNotifier {
 
   Future<bool> createTopic(String rawTitle) async {
     final title = rawTitle.trim();
-    if (title.isEmpty || title.length > 120 || _isCreatingTopic) {
+    if (title.isEmpty ||
+        title.length > 120 ||
+        _isCreatingTopic ||
+        !canCreateTopic) {
       return false;
     }
     _isCreatingTopic = true;
@@ -113,6 +222,7 @@ class ChatViewModel extends ChangeNotifier {
       _topics = [..._topics.where((item) => item.id != topic.id), topic];
       _selectedTopic = topic;
       _messages = const <ChatMessage>[];
+      _messagesNextCursor = null;
       _typingLabel = null;
       unawaited(_realtimeService.subscribeTopic(topic.id));
       return true;
@@ -131,10 +241,201 @@ class ChatViewModel extends ChangeNotifier {
     }
   }
 
+  Future<List<Contact>> loadMemberCandidates() async {
+    if (_isLoadingMemberCandidates) {
+      return memberCandidates;
+    }
+    _isLoadingMemberCandidates = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      _memberCandidates = await _chatRepository.listContacts(
+        purpose: 'group_member',
+      );
+      return memberCandidates;
+    } on SessionExpiredException {
+      _errorMessage = 'Сессия истекла. Войдите заново.';
+      return const <Contact>[];
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+      return const <Contact>[];
+    } catch (_) {
+      _errorMessage = 'Не получилось загрузить участников';
+      return const <Contact>[];
+    } finally {
+      _isLoadingMemberCandidates = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> addMember({
+    required Contact contact,
+    required String memberRole,
+    required bool canWrite,
+  }) async {
+    if (!canManageMembers || _isManagingMembers) {
+      return false;
+    }
+    _isManagingMembers = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final member = await _chatRepository.addMember(
+        conversationId: _conversationId,
+        userId: contact.id,
+        memberRole: memberRole,
+        canWrite: canWrite,
+      );
+      _members = [
+        ..._members.where((item) => item.userId != member.userId),
+        member,
+      ];
+      _memberCandidates = _memberCandidates
+          .where((item) => item.id != contact.id)
+          .toList(growable: false);
+      return true;
+    } on SessionExpiredException {
+      _errorMessage = 'Сессия истекла. Войдите заново.';
+      return false;
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+      return false;
+    } catch (_) {
+      _errorMessage = 'Не получилось добавить участника';
+      return false;
+    } finally {
+      _isManagingMembers = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> updateMember({
+    required ConversationMember member,
+    required String memberRole,
+    required bool canWrite,
+  }) async {
+    if (!canManageMembers ||
+        _isManagingMembers ||
+        member.userId == currentUserId) {
+      return false;
+    }
+    _isManagingMembers = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final updated = await _chatRepository.updateMember(
+        conversationId: _conversationId,
+        userId: member.userId,
+        memberRole: memberRole,
+        canWrite: canWrite,
+      );
+      _replaceMember(updated);
+      return true;
+    } on SessionExpiredException {
+      _errorMessage = 'Сессия истекла. Войдите заново.';
+      return false;
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+      return false;
+    } catch (_) {
+      _errorMessage = 'Не получилось обновить участника';
+      return false;
+    } finally {
+      _isManagingMembers = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> removeMember(ConversationMember member) async {
+    if (!canManageMembers ||
+        _isManagingMembers ||
+        member.userId == currentUserId) {
+      return false;
+    }
+    _isManagingMembers = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      await _chatRepository.removeMember(
+        conversationId: _conversationId,
+        userId: member.userId,
+      );
+      _members = _members
+          .where((item) => item.userId != member.userId)
+          .toList(growable: false);
+      return true;
+    } on SessionExpiredException {
+      _errorMessage = 'Сессия истекла. Войдите заново.';
+      return false;
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+      return false;
+    } catch (_) {
+      _errorMessage = 'Не получилось удалить участника';
+      return false;
+    } finally {
+      _isManagingMembers = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> updateTopic({
+    required TopicInfo topic,
+    String? title,
+    bool? isArchived,
+  }) async {
+    final trimmedTitle = title?.trim();
+    if (!canManageTopics ||
+        _isUpdatingTopic ||
+        (trimmedTitle != null &&
+            (trimmedTitle.isEmpty || trimmedTitle.length > 120))) {
+      return false;
+    }
+    _isUpdatingTopic = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final updated = await _chatRepository.updateTopic(
+        topicId: topic.id,
+        title: trimmedTitle,
+        isArchived: isArchived,
+      );
+      _replaceTopic(updated);
+      if (updated.id == _selectedTopic?.id && updated.isArchived) {
+        await _stopTyping(updated.id);
+      }
+      return true;
+    } on SessionExpiredException {
+      _errorMessage = 'Сессия истекла. Войдите заново.';
+      return false;
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+      return false;
+    } catch (_) {
+      _errorMessage = 'Не получилось обновить тему';
+      return false;
+    } finally {
+      _isUpdatingTopic = false;
+      notifyListeners();
+    }
+  }
+
   Future<bool> sendMessage(String rawBody) async {
     final topic = _selectedTopic;
     final body = rawBody.trim();
     if (topic == null || body.isEmpty || body.length > 4000 || _isSending) {
+      return false;
+    }
+    if (!canUseComposer) {
+      _errorMessage = topic.isArchived
+          ? 'Тема в архиве, новые сообщения недоступны'
+          : 'Чат закрыт, новые сообщения недоступны';
+      notifyListeners();
       return false;
     }
     _isSending = true;
@@ -178,6 +479,81 @@ class ChatViewModel extends ChangeNotifier {
     }
   }
 
+  bool canEditMessage(ChatMessage message) {
+    return message.isMine &&
+        !message.isPending &&
+        !message.isFailed &&
+        message.deletedAt == null;
+  }
+
+  bool canDeleteMessage(ChatMessage message) {
+    return message.isMine &&
+        !message.isPending &&
+        !message.isFailed &&
+        message.deletedAt == null;
+  }
+
+  Future<bool> editMessage(ChatMessage message, String rawBody) async {
+    final body = rawBody.trim();
+    if (!canEditMessage(message) ||
+        body.isEmpty ||
+        body.length > 4000 ||
+        _isMutatingMessage) {
+      return false;
+    }
+    _isMutatingMessage = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final edited = await _chatRepository.editMessage(
+        messageId: message.id,
+        body: body,
+      );
+      _upsertMessage(_preserveMessageThreadState(message, edited));
+      return true;
+    } on SessionExpiredException {
+      _errorMessage = 'Сессия истекла. Войдите заново.';
+      return false;
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+      return false;
+    } catch (_) {
+      _errorMessage = 'Не получилось изменить сообщение';
+      return false;
+    } finally {
+      _isMutatingMessage = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> deleteMessage(ChatMessage message) async {
+    if (!canDeleteMessage(message) || _isMutatingMessage) {
+      return false;
+    }
+    _isMutatingMessage = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final deletion = await _chatRepository.deleteMessage(message.id);
+      _applyMessageDeletion(deletion.id, deletion.deletedAt);
+      return true;
+    } on SessionExpiredException {
+      _errorMessage = 'Сессия истекла. Войдите заново.';
+      return false;
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+      return false;
+    } catch (_) {
+      _errorMessage = 'Не получилось удалить сообщение';
+      return false;
+    } finally {
+      _isMutatingMessage = false;
+      notifyListeners();
+    }
+  }
+
   Future<String?> openOrCreateThread(ChatMessage message) async {
     final existingThreadId = message.threadId;
     if (existingThreadId != null) {
@@ -187,7 +563,10 @@ class ChatViewModel extends ChangeNotifier {
       );
       return existingThreadId;
     }
-    if (_isOpeningThread || message.isPending || message.isFailed) {
+    if (_isOpeningThread ||
+        message.isPending ||
+        message.isFailed ||
+        message.deletedAt != null) {
       return null;
     }
 
@@ -227,7 +606,7 @@ class ChatViewModel extends ChangeNotifier {
 
   Future<void> handleComposerChanged(String text) async {
     final topic = _selectedTopic;
-    if (topic == null) {
+    if (topic == null || !canUseComposer) {
       return;
     }
     final shouldType = text.trim().isNotEmpty;
@@ -249,6 +628,32 @@ class ChatViewModel extends ChangeNotifier {
     }
   }
 
+  Future<void> loadOlderMessages() async {
+    final topic = _selectedTopic;
+    final cursor = _messagesNextCursor;
+    if (topic == null || cursor == null || _isLoadingOlderMessages) {
+      return;
+    }
+    _isLoadingOlderMessages = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final page = await _chatRepository.listMessages(topic.id, cursor: cursor);
+      _messages = _mergeMessages(_messages, page.items);
+      _messagesNextCursor = page.nextCursor;
+    } on SessionExpiredException {
+      _errorMessage = 'Сессия истекла. Войдите заново.';
+    } on ApiException catch (error) {
+      _errorMessage = error.message;
+    } catch (_) {
+      _errorMessage = 'Не получилось загрузить историю';
+    } finally {
+      _isLoadingOlderMessages = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> _loadMessagesForSelectedTopic() async {
     final topic = _selectedTopic;
     if (topic == null) {
@@ -257,6 +662,7 @@ class ChatViewModel extends ChangeNotifier {
     unawaited(_realtimeService.subscribeTopic(topic.id));
     final page = await _chatRepository.listMessages(topic.id);
     _messages = sortChatMessagesAscending(page.items);
+    _messagesNextCursor = page.nextCursor;
     final maxSeq = _messages.fold<int>(
       topic.lastReadSeq,
       (max, message) => message.seq > max ? message.seq : max,
@@ -268,9 +674,19 @@ class ChatViewModel extends ChangeNotifier {
     }
   }
 
-  TopicInfo? _selectInitialTopic(ConversationDetail detail) {
+  TopicInfo? _selectTopicAfterLoad(
+    ConversationDetail detail,
+    String? previousSelectedTopicId,
+  ) {
     if (detail.topics.isEmpty) {
       return null;
+    }
+    if (previousSelectedTopicId != null) {
+      for (final topic in detail.topics) {
+        if (topic.id == previousSelectedTopicId) {
+          return topic;
+        }
+      }
     }
     final defaultTopicId = detail.conversation.defaultTopicId;
     return detail.topics.firstWhere(
@@ -304,6 +720,10 @@ class ChatViewModel extends ChangeNotifier {
         _handleTypingEvent(event);
         return;
       case 'topic.created':
+      case 'conversation.member_added':
+      case 'conversation.member_updated':
+      case 'conversation.member_removed':
+      case 'conversation.status_updated':
         unawaited(load());
         return;
       case 'unread.changed':
@@ -351,29 +771,114 @@ class ChatViewModel extends ChangeNotifier {
   void _editMessage(Map<String, dynamic> data) {
     final messageId = data['message_id'] as String?;
     final body = data['body'] as String?;
-    if (messageId == null || body == null) {
+    if (messageId == null ||
+        body == null ||
+        data['topic_id'] != _selectedTopic?.id ||
+        data['thread_id'] != null) {
       return;
     }
+    final editedAt = _optionalDateTime(data['edited_at']);
     _messages = [
       for (final message in _messages)
-        if (message.id == messageId) message.copyWith(body: body) else message,
+        if (message.id == messageId)
+          message.copyWith(body: body, editedAt: editedAt)
+        else
+          message,
     ];
     notifyListeners();
   }
 
   void _deleteMessage(Map<String, dynamic> data) {
     final messageId = data['message_id'] as String?;
-    if (messageId == null) {
+    if (messageId == null ||
+        data['topic_id'] != _selectedTopic?.id ||
+        data['thread_id'] != null) {
       return;
     }
+    _applyMessageDeletion(messageId, _optionalDateTime(data['deleted_at']));
+    notifyListeners();
+  }
+
+  void _applyMessageDeletion(String messageId, DateTime? deletedAt) {
     _messages = [
       for (final message in _messages)
         if (message.id == messageId)
-          message.copyWith(body: 'Сообщение удалено')
+          message.copyWith(
+            body: 'Сообщение удалено',
+            deletedAt: deletedAt ?? message.deletedAt ?? DateTime.now(),
+          )
         else
           message,
     ];
-    notifyListeners();
+  }
+
+  ChatMessage _preserveMessageThreadState(
+    ChatMessage previous,
+    ChatMessage updated,
+  ) {
+    return updated.copyWith(
+      threadId: updated.threadId ?? previous.threadId,
+      threadReplyCount: updated.threadReplyCount > 0
+          ? updated.threadReplyCount
+          : previous.threadReplyCount,
+    );
+  }
+
+  List<ChatMessage> _mergeMessages(
+    List<ChatMessage> existing,
+    List<ChatMessage> incoming,
+  ) {
+    var merged = existing;
+    for (final message in incoming) {
+      final byId = merged.indexWhere((item) => item.id == message.id);
+      if (byId != -1) {
+        merged = [
+          ...merged.take(byId),
+          _preserveMessageThreadState(merged[byId], message),
+          ...merged.skip(byId + 1),
+        ];
+        continue;
+      }
+      final byClientId = message.clientMessageId == null
+          ? -1
+          : merged.indexWhere(
+              (item) => item.clientMessageId == message.clientMessageId,
+            );
+      if (byClientId != -1) {
+        merged = [
+          ...merged.take(byClientId),
+          _preserveMessageThreadState(merged[byClientId], message),
+          ...merged.skip(byClientId + 1),
+        ];
+        continue;
+      }
+      merged = [...merged, message];
+    }
+    return sortChatMessagesAscending(merged);
+  }
+
+  DateTime? _optionalDateTime(Object? raw) {
+    if (raw is! String || raw.isEmpty) {
+      return null;
+    }
+    return DateTime.tryParse(raw);
+  }
+
+  void _replaceMember(ConversationMember member) {
+    _members = [
+      for (final item in _members)
+        if (item.userId == member.userId) member else item,
+    ];
+  }
+
+  void _replaceTopic(TopicInfo topic) {
+    _topics = [
+      for (final item in _topics)
+        if (item.id == topic.id) topic else item,
+    ];
+    if (_selectedTopic?.id == topic.id) {
+      _selectedTopic = topic;
+    }
   }
 
   void _handleTypingEvent(RealtimeEvent event) {
@@ -406,6 +911,31 @@ class ChatViewModel extends ChangeNotifier {
     final local = dateTime.toLocal();
     return '${local.hour.toString().padLeft(2, '0')}:'
         '${local.minute.toString().padLeft(2, '0')}';
+  }
+
+  bool get _isGlobalAdmin {
+    final role = currentUserRole;
+    return role == 'owner' || role == 'admin';
+  }
+
+  ConversationMember? get _currentMember {
+    final userId = currentUserId;
+    if (userId == null) {
+      return null;
+    }
+    for (final member in _members) {
+      if (member.userId == userId && member.isActive) {
+        return member;
+      }
+    }
+    return null;
+  }
+
+  bool get _currentMemberCanManage {
+    final memberRole = _currentMember?.memberRole;
+    return memberRole == 'owner' ||
+        memberRole == 'admin' ||
+        memberRole == 'moderator';
   }
 
   @override

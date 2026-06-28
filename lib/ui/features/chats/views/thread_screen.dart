@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ogneva_msg_app/data/repositories/chat_repository.dart';
@@ -89,8 +91,21 @@ class _ThreadContent extends StatelessWidget {
                     rootMessage: viewModel.rootMessage,
                     replies: viewModel.replies,
                     isLoading: viewModel.isLoading,
+                    isLoadingOlderReplies: viewModel.isLoadingOlderReplies,
+                    isMutatingMessage: viewModel.isMutatingMessage,
+                    hasOlderReplies: viewModel.hasOlderReplies,
                     errorMessage: viewModel.errorMessage,
                     onRetry: viewModel.load,
+                    onLoadOlder: viewModel.loadOlderReplies,
+                    canEditMessage: viewModel.canEditMessage,
+                    canDeleteMessage: viewModel.canDeleteMessage,
+                    onEditMessage: (message) => _showEditThreadMessageSheet(
+                      context: context,
+                      message: message,
+                      isSaving: () => viewModel.isMutatingMessage,
+                      onSave: (body) => viewModel.editMessage(message, body),
+                    ),
+                    onDeleteMessage: viewModel.deleteMessage,
                   ),
                 ),
                 if (viewModel.typingLabel != null)
@@ -113,15 +128,31 @@ class _RepliesPane extends StatelessWidget {
     required this.rootMessage,
     required this.replies,
     required this.isLoading,
+    required this.isLoadingOlderReplies,
+    required this.isMutatingMessage,
+    required this.hasOlderReplies,
     required this.errorMessage,
     required this.onRetry,
+    required this.onLoadOlder,
+    required this.canEditMessage,
+    required this.canDeleteMessage,
+    required this.onEditMessage,
+    required this.onDeleteMessage,
   });
 
   final ChatMessage? rootMessage;
   final List<ChatMessage> replies;
   final bool isLoading;
+  final bool isLoadingOlderReplies;
+  final bool isMutatingMessage;
+  final bool hasOlderReplies;
   final String? errorMessage;
   final VoidCallback onRetry;
+  final VoidCallback onLoadOlder;
+  final bool Function(ChatMessage message) canEditMessage;
+  final bool Function(ChatMessage message) canDeleteMessage;
+  final void Function(ChatMessage message) onEditMessage;
+  final Future<bool> Function(ChatMessage message) onDeleteMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -165,6 +196,12 @@ class _RepliesPane extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 14),
+        if (hasOlderReplies)
+          _LoadOlderRepliesButton(
+            key: const Key('thread_load_older_replies_button'),
+            isLoading: isLoadingOlderReplies,
+            onPressed: onLoadOlder,
+          ),
         if (replies.isEmpty)
           const Padding(
             padding: EdgeInsets.only(top: 18),
@@ -178,8 +215,49 @@ class _RepliesPane extends StatelessWidget {
             ),
           )
         else
-          for (final reply in replies) _ThreadReply(message: reply),
+          for (final reply in replies)
+            _ThreadReply(
+              message: reply,
+              isMutatingMessage: isMutatingMessage,
+              canEdit: canEditMessage(reply),
+              canDelete: canDeleteMessage(reply),
+              onEdit: onEditMessage,
+              onDelete: onDeleteMessage,
+            ),
       ],
+    );
+  }
+}
+
+class _LoadOlderRepliesButton extends StatelessWidget {
+  const _LoadOlderRepliesButton({
+    super.key,
+    required this.isLoading,
+    required this.onPressed,
+  });
+
+  final bool isLoading;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Center(
+        child: OutlinedButton.icon(
+          onPressed: isLoading ? null : onPressed,
+          icon: isLoading
+              ? const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.primaryBlue,
+                  ),
+                )
+              : const Icon(Icons.history_rounded),
+          label: Text(isLoading ? 'Загружаем...' : 'Показать предыдущие'),
+        ),
+      ),
     );
   }
 }
@@ -230,6 +308,7 @@ class _RootMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDeleted = message.deletedAt != null;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -266,12 +345,24 @@ class _RootMessage extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             message.body,
-            style: const TextStyle(
-              color: AppColors.text,
+            style: TextStyle(
+              color: isDeleted ? AppColors.mutedText : AppColors.text,
               fontSize: 15,
               height: 1.35,
+              fontStyle: isDeleted ? FontStyle.italic : FontStyle.normal,
             ),
           ),
+          if (message.editedAt != null || isDeleted) ...[
+            const SizedBox(height: 6),
+            Text(
+              isDeleted ? 'Удалено' : 'Изменено',
+              style: const TextStyle(
+                color: AppColors.mutedText,
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -279,15 +370,29 @@ class _RootMessage extends StatelessWidget {
 }
 
 class _ThreadReply extends StatelessWidget {
-  const _ThreadReply({required this.message});
+  const _ThreadReply({
+    required this.message,
+    required this.isMutatingMessage,
+    required this.canEdit,
+    required this.canDelete,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
   final ChatMessage message;
+  final bool isMutatingMessage;
+  final bool canEdit;
+  final bool canDelete;
+  final void Function(ChatMessage message) onEdit;
+  final Future<bool> Function(ChatMessage message) onDelete;
 
   @override
   Widget build(BuildContext context) {
     final alignment = message.isMine
         ? CrossAxisAlignment.end
         : CrossAxisAlignment.start;
+    final isDeleted = message.deletedAt != null;
+    final canShowActions = canEdit || canDelete;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Column(
@@ -329,21 +434,60 @@ class _ThreadReply extends StatelessWidget {
                         fontSize: 12,
                       ),
                     ),
+                    if (canShowActions) ...[
+                      const SizedBox(width: 2),
+                      PopupMenuButton<_ThreadMessageAction>(
+                        key: Key('thread_message_actions_${message.id}'),
+                        tooltip: 'Действия с ответом',
+                        enabled: !isMutatingMessage,
+                        icon: const Icon(
+                          Icons.more_vert_rounded,
+                          size: 18,
+                          color: AppColors.mutedText,
+                        ),
+                        padding: EdgeInsets.zero,
+                        itemBuilder: (context) => [
+                          if (canEdit)
+                            const PopupMenuItem<_ThreadMessageAction>(
+                              value: _ThreadMessageAction.edit,
+                              child: Text('Редактировать'),
+                            ),
+                          if (canDelete)
+                            const PopupMenuItem<_ThreadMessageAction>(
+                              value: _ThreadMessageAction.delete,
+                              child: Text('Удалить'),
+                            ),
+                        ],
+                        onSelected: (action) {
+                          switch (action) {
+                            case _ThreadMessageAction.edit:
+                              onEdit(message);
+                              break;
+                            case _ThreadMessageAction.delete:
+                              unawaited(onDelete(message));
+                              break;
+                          }
+                        },
+                      ),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 7),
                 Text(
                   message.body,
-                  style: const TextStyle(
-                    color: AppColors.text,
+                  style: TextStyle(
+                    color: isDeleted ? AppColors.mutedText : AppColors.text,
                     fontSize: 15,
                     height: 1.32,
+                    fontStyle: isDeleted ? FontStyle.italic : FontStyle.normal,
                   ),
                 ),
               ],
             ),
           ),
           if (message.readLabel != null ||
+              message.editedAt != null ||
+              isDeleted ||
               message.isPending ||
               message.isFailed) ...[
             const SizedBox(height: 4),
@@ -352,6 +496,10 @@ class _ThreadReply extends StatelessWidget {
                   ? 'Не отправлено'
                   : message.isPending
                   ? 'Отправляем...'
+                  : isDeleted
+                  ? 'Удалено'
+                  : message.editedAt != null
+                  ? 'Изменено'
                   : message.readLabel!,
               style: TextStyle(
                 color: message.isFailed
@@ -361,6 +509,139 @@ class _ThreadReply extends StatelessWidget {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+enum _ThreadMessageAction { edit, delete }
+
+Future<void> _showEditThreadMessageSheet({
+  required BuildContext context,
+  required ChatMessage message,
+  required bool Function() isSaving,
+  required Future<bool> Function(String body) onSave,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (_) => _EditThreadMessageSheet(
+      message: message,
+      isSaving: isSaving,
+      onSave: onSave,
+    ),
+  );
+}
+
+class _EditThreadMessageSheet extends StatefulWidget {
+  const _EditThreadMessageSheet({
+    required this.message,
+    required this.isSaving,
+    required this.onSave,
+  });
+
+  final ChatMessage message;
+  final bool Function() isSaving;
+  final Future<bool> Function(String body) onSave;
+
+  @override
+  State<_EditThreadMessageSheet> createState() =>
+      _EditThreadMessageSheetState();
+}
+
+class _EditThreadMessageSheetState extends State<_EditThreadMessageSheet> {
+  late final TextEditingController _controller;
+  late bool _hasText;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.message.body);
+    _hasText = widget.message.body.trim().isNotEmpty;
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (!_hasText || widget.isSaving()) {
+      return;
+    }
+    final saved = await widget.onSave(_controller.text);
+    if (!mounted || !saved) {
+      return;
+    }
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final saving = widget.isSaving();
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20, 18, 20, 18 + bottomInset),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Редактировать ответ',
+            style: TextStyle(
+              color: AppColors.text,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            key: const Key('thread_message_edit_input'),
+            controller: _controller,
+            autofocus: true,
+            minLines: 2,
+            maxLines: 6,
+            maxLength: 4000,
+            textInputAction: TextInputAction.newline,
+            onChanged: (value) {
+              setState(() => _hasText = value.trim().isNotEmpty);
+            },
+            decoration: const InputDecoration(
+              labelText: 'Текст',
+              counterText: '',
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              TextButton(
+                onPressed: saving ? null : () => Navigator.of(context).pop(),
+                child: const Text('Отмена'),
+              ),
+              const Spacer(),
+              FilledButton.icon(
+                key: const Key('thread_message_edit_submit_button'),
+                onPressed: _hasText && !saving ? _save : null,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 44),
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                ),
+                icon: saving
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.check_rounded),
+                label: const Text('Сохранить'),
+              ),
+            ],
+          ),
         ],
       ),
     );
