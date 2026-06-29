@@ -1964,7 +1964,7 @@ class _FakeRealtimeService implements RealtimeService {
   Future<void> connect() async {}
 
   @override
-  Future<void> disconnect() async {}
+  Future<void> disconnect({bool resetSubscriptions = false}) async {}
 
   @override
   Future<void> dispose() => _events.close();

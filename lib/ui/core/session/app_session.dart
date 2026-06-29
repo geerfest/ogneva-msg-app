@@ -69,7 +69,7 @@ class AppSession extends ChangeNotifier {
     _currentUser = null;
     _status = AppSessionStatus.signedOut;
     notifyListeners();
-    await _realtimeService.disconnect();
+    await _realtimeService.disconnect(resetSubscriptions: true);
     await _authRepository.signOut();
   }
 }

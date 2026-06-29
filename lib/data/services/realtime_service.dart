@@ -10,7 +10,7 @@ abstract class RealtimeService {
   Stream<RealtimeEvent> get events;
 
   Future<void> connect();
-  Future<void> disconnect();
+  Future<void> disconnect({bool resetSubscriptions = false});
   Future<void> subscribeConversation(String conversationId);
   Future<void> subscribeTopic(String topicId);
   Future<void> subscribeThread(String threadId);
@@ -41,11 +41,13 @@ class CentrifugoRealtimeService implements RealtimeService {
       return;
     }
     final existing = _client;
+    var channelsToRestore = const <String>[];
     if (existing != null) {
       if (existing.state == centrifuge.State.disconnected) {
-        await existing.connect();
+        channelsToRestore = await _closeClient(keepChannels: true);
+      } else {
+        return;
       }
-      return;
     }
 
     final tokenResponse = await _connectionToken();
@@ -63,10 +65,17 @@ class CentrifugoRealtimeService implements RealtimeService {
     });
     _client = client;
     await client.connect();
+    for (final channel in channelsToRestore) {
+      await _subscribeWithClient(client, channel);
+    }
   }
 
   @override
-  Future<void> disconnect() async {
+  Future<void> disconnect({bool resetSubscriptions = false}) async {
+    if (resetSubscriptions) {
+      await _closeClient(keepChannels: false);
+      return;
+    }
     await _client?.disconnect();
   }
 
@@ -86,12 +95,26 @@ class CentrifugoRealtimeService implements RealtimeService {
   }
 
   Future<void> _subscribe(String channel) async {
-    if (_isDisposed || _subscriptions.containsKey(channel)) {
+    if (_isDisposed) {
       return;
     }
+    final wasSubscribed = _subscriptions.containsKey(channel);
     await connect();
+    if (wasSubscribed && _subscriptions.containsKey(channel)) {
+      return;
+    }
     final client = _client;
     if (client == null) {
+      return;
+    }
+    await _subscribeWithClient(client, channel);
+  }
+
+  Future<void> _subscribeWithClient(
+    centrifuge.Client client,
+    String channel,
+  ) async {
+    if (_subscriptions.containsKey(channel)) {
       return;
     }
     final subscription = client.newSubscription(
@@ -155,12 +178,22 @@ class CentrifugoRealtimeService implements RealtimeService {
   @override
   Future<void> dispose() async {
     _isDisposed = true;
-    for (final subscription in _subscriptions.values) {
-      await _client?.removeSubscription(subscription);
+    await _closeClient(keepChannels: false);
+    await _eventsController.close();
+  }
+
+  Future<List<String>> _closeClient({required bool keepChannels}) async {
+    final client = _client;
+    final channels = _subscriptions.keys.toList(growable: false);
+    if (client != null) {
+      for (final subscription in _subscriptions.values) {
+        await client.removeSubscription(subscription);
+      }
+      await client.close();
     }
     _subscriptions.clear();
-    await _client?.close();
-    await _eventsController.close();
+    _client = null;
+    return keepChannels ? channels : const <String>[];
   }
 }
 

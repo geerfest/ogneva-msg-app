@@ -292,7 +292,7 @@ Verification notes:
 
 ## CL-7 - Live iOS Simulator Verification
 
-Status: `pending`
+Status: `done`
 
 Scope:
 
@@ -303,15 +303,38 @@ Scope:
 
 Acceptance:
 
-- [ ] `dart format .` completed;
-- [ ] `flutter analyze` passed;
-- [ ] `flutter test` passed;
-- [ ] iOS simulator launches the app against live backend;
-- [ ] live scenario passes:
+- [x] `dart format .` completed;
+- [x] `flutter analyze` passed;
+- [x] `flutter test` passed;
+- [x] iOS simulator launches the app against live backend;
+- [x] live scenario passes:
   `login -> contacts -> create chat -> chats filters/archive -> chat management
   -> edit/delete -> pagination -> realtime refresh`;
-- [ ] any skipped live check is documented with the reason.
+- [x] any skipped live check is documented with the reason.
 
 Verification notes:
 
-- Pending.
+- 2026-06-29: Started verification after checking backend
+  PRODUCT_REQUIREMENTS/API/REALTIME/OpenAPI docs and local seed credentials.
+  `docker compose -f deploy/docker-compose.yml ps` showed the local stack
+  running with API, worker, Postgres, Redis, and Centrifugo; backend
+  `tools/mvp_smoke` passed against `http://127.0.0.1:8080` and Docker Postgres.
+- 2026-06-29: Ran `dart format .`, `flutter analyze`, and `flutter test`;
+  all passed. Initial iOS live pass exposed a realtime lifecycle bug after
+  logout/login: Centrifugo logged `token user mismatch` because the client kept
+  the previous user's connection/subscriptions. Fixed sign-out reset/reconnect
+  handling in `CentrifugoRealtimeService` and covered it with
+  `test/ui/app_session_test.dart`; reran `dart format .`, `flutter analyze`,
+  and `flutter test` (47 tests passed).
+- 2026-06-29: XcodeBuildMCP `build_run_sim` passed for
+  `ios/Runner.xcworkspace` / `Runner` on `iPhone 17` (iOS 26.5). Verified live
+  `student@example.com / user123` flow against `http://localhost:8080/api/v1`:
+  logout/login, contacts via create chat, direct chat open, filters unread and
+  archive/unarchive, chat management members/topics sheet, message edit/delete,
+  message cursor pagination with `Показать предыдущие`, and realtime list
+  refresh after a teacher API message. Centrifugo showed `1` client and `9`
+  subscriptions after fresh login, `0` after logout, and no token mismatch after
+  the fix. Screenshot:
+  `/var/folders/c0/5zsz0jvx3ys0qdp7qjc07wnm0000gn/T/screenshot_optimized_93db2a67-1a07-44b1-9757-418f32d15180.jpg`.
+  The simulator app process was stopped after verification. No live checks were
+  skipped.
