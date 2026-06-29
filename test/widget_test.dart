@@ -231,6 +231,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(chat.listConversationFilters, ['all', 'all', 'all', 'all']);
+    expect(realtime.subscribedConversationIds, ['conversation-1']);
     expect(find.text('После возврата'), findsOneWidget);
   });
 
@@ -327,6 +328,75 @@ void main() {
 
     expect(find.text('Нельзя создать чат с этим контактом'), findsOneWidget);
     expect(find.text('Новый чат'), findsOneWidget);
+  });
+
+  testWidgets('create chat refreshes contacts after link realtime events', (
+    WidgetTester tester,
+  ) async {
+    final realtime = _FakeRealtimeService();
+    final directContacts = <Contact>[
+      const Contact(
+        id: 'teacher-old',
+        role: 'teacher',
+        displayName: 'Старый учитель',
+        email: 'old-teacher@example.com',
+        allowedConversationTypes: ['direct'],
+        reason: 'linked_teacher',
+      ),
+    ];
+    final chat = _FakeChatRepository(
+      directContacts: directContacts,
+      groupContacts: const <Contact>[],
+    );
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(restoreUser: _student),
+        chatRepository: chat,
+        realtimeService: realtime,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Создать чат'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Старый учитель'), findsOneWidget);
+    await tester.tap(find.text('Старый учитель'));
+    await tester.pump();
+    var submitButton = tester.widget<FilledButton>(
+      find.byKey(const Key('create_chat_submit_button')),
+    );
+    expect(submitButton.onPressed, isNotNull);
+
+    directContacts
+      ..clear()
+      ..add(
+        const Contact(
+          id: 'teacher-new',
+          role: 'teacher',
+          displayName: 'Новый учитель',
+          email: 'new-teacher@example.com',
+          allowedConversationTypes: ['direct'],
+          reason: 'linked_teacher',
+        ),
+      );
+
+    realtime.emit('student_teacher_link.created');
+    await tester.pumpAndSettle();
+
+    expect(chat.contactPurposes, [
+      'direct',
+      'group_member',
+      'direct',
+      'group_member',
+    ]);
+    expect(find.text('Старый учитель'), findsNothing);
+    expect(find.text('Новый учитель'), findsOneWidget);
+    submitButton = tester.widget<FilledButton>(
+      find.byKey(const Key('create_chat_submit_button')),
+    );
+    expect(submitButton.onPressed, isNull);
   });
 
   testWidgets('create chat flow creates group from group-member discovery', (
@@ -634,6 +704,48 @@ void main() {
     expect(find.text('Удалено'), findsOneWidget);
   });
 
+  testWidgets('chat detail reloads only matching realtime invalidations', (
+    WidgetTester tester,
+  ) async {
+    final realtime = _FakeRealtimeService();
+    final chat = _FakeChatRepository(
+      conversationDetail: _conversation(title: 'До статуса'),
+    );
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(restoreUser: _student),
+        chatRepository: chat,
+        realtimeService: realtime,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('ЕГЭ Информатика 2026'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('До статуса'), findsOneWidget);
+    expect(chat.loadedConversationIds, ['conversation-1']);
+
+    realtime.emit(
+      'conversation.status_updated',
+      data: const {'conversation_id': 'conversation-other'},
+    );
+    await tester.pumpAndSettle();
+
+    expect(chat.loadedConversationIds, ['conversation-1']);
+
+    chat.conversationDetail = _conversation(title: 'После статуса');
+    realtime.emit(
+      'conversation.status_updated',
+      data: const {'conversation_id': 'conversation-1'},
+    );
+    await tester.pumpAndSettle();
+
+    expect(chat.loadedConversationIds, ['conversation-1', 'conversation-1']);
+    expect(find.text('После статуса'), findsOneWidget);
+  });
+
   testWidgets('chat older topic messages merge by cursor without duplicates', (
     WidgetTester tester,
   ) async {
@@ -788,6 +900,62 @@ void main() {
     expect(find.text('Удалено'), findsOneWidget);
   });
 
+  testWidgets('thread ignores current user typing realtime events', (
+    WidgetTester tester,
+  ) async {
+    final realtime = _FakeRealtimeService();
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(restoreUser: _student),
+        chatRepository: _FakeChatRepository(),
+        realtimeService: realtime,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('ЕГЭ Информатика 2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('2 ответа'));
+    await tester.pumpAndSettle();
+
+    realtime.emit(
+      'typing.started',
+      data: {
+        'thread_id': 'thread-1',
+        'user_id': _student.id,
+        'display_name': _student.displayName,
+      },
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('${_student.displayName} печатает...'), findsNothing);
+
+    realtime.emit(
+      'typing.started',
+      data: const {
+        'thread_id': 'thread-1',
+        'user_id': 'teacher-1',
+        'display_name': 'Мария',
+      },
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Мария печатает...'), findsOneWidget);
+
+    realtime.emit(
+      'typing.stopped',
+      data: const {
+        'thread_id': 'thread-1',
+        'user_id': 'teacher-1',
+        'display_name': 'Мария',
+      },
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Мария печатает...'), findsNothing);
+  });
+
   testWidgets('chat screen creates and selects a topic', (
     WidgetTester tester,
   ) async {
@@ -903,6 +1071,73 @@ void main() {
 
     expect(chat.removedMemberIds, ['teacher-1']);
     expect(find.text('Мария Учитель'), findsNothing);
+  });
+
+  testWidgets('member candidates refresh after link realtime events', (
+    WidgetTester tester,
+  ) async {
+    final realtime = _FakeRealtimeService();
+    final groupContacts = <Contact>[
+      const Contact(
+        id: 'student-old',
+        role: 'student',
+        displayName: 'Старый студент',
+        email: 'old-student@example.com',
+        allowedConversationTypes: ['group'],
+        reason: 'group_allowed',
+      ),
+    ];
+    final chat = _FakeChatRepository(
+      conversationDetail: _conversation(),
+      members: const [
+        ConversationMember(
+          userId: _adminUserId,
+          displayName: 'Dev Admin',
+          memberRole: 'owner',
+          canWrite: true,
+          muted: false,
+        ),
+      ],
+      groupContacts: groupContacts,
+    );
+
+    await tester.pumpWidget(
+      OgnevaApp(
+        authRepository: _FakeAuthRepository(restoreUser: _admin),
+        chatRepository: chat,
+        realtimeService: realtime,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('ЕГЭ Информатика 2026'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('chat_management_button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('add_member_button')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Старый студент'), findsOneWidget);
+
+    groupContacts
+      ..clear()
+      ..add(
+        const Contact(
+          id: 'student-new',
+          role: 'student',
+          displayName: 'Новый студент',
+          email: 'new-student@example.com',
+          allowedConversationTypes: ['group'],
+          reason: 'group_allowed',
+        ),
+      );
+
+    realtime.emit('student_teacher_link.revoked');
+    await tester.pumpAndSettle();
+
+    expect(chat.contactPurposes, ['group_member', 'group_member']);
+    expect(find.text('Старый студент'), findsNothing);
+    expect(find.text('Новый студент'), findsOneWidget);
   });
 
   testWidgets('chat management renames and archives topics', (
@@ -1275,6 +1510,7 @@ class _FakeChatRepository implements ChatRepository {
   final listMessageCursors = <String?>[];
   final listThreadIds = <String>[];
   final listThreadCursors = <String?>[];
+  final loadedConversationIds = <String>[];
   final archivedConversationIds = <String>[];
   final unarchivedConversationIds = <String>[];
   final _conversationPageIndexByFilter = <String, int>{};
@@ -1348,6 +1584,7 @@ class _FakeChatRepository implements ChatRepository {
 
   @override
   Future<ConversationDetail> loadConversation(String conversationId) async {
+    loadedConversationIds.add(conversationId);
     final conversation =
         _createdConversationsById[conversationId] ??
         (conversationDetail.id == conversationId
@@ -1703,17 +1940,19 @@ class _FakeChatRepository implements ChatRepository {
 
 class _FakeRealtimeService implements RealtimeService {
   final _events = StreamController<RealtimeEvent>.broadcast();
+  final _conversationSubscriptions = <String>{};
+  final subscribedConversationIds = <String>[];
   var _eventIndex = 0;
 
   @override
   Stream<RealtimeEvent> get events => _events.stream;
 
-  void emit(String eventType, {Map<String, dynamic>? data}) {
+  void emit(String eventType, {Map<String, dynamic>? data, String? channel}) {
     _events.add(
       RealtimeEvent(
         eventId: 'event-${_eventIndex++}',
         eventType: eventType,
-        channel: 'user:${_student.id}',
+        channel: channel ?? 'user:${_student.id}',
         occurredAt: DateTime.utc(2026, 6, 26, 10),
         version: 1,
         data: data ?? const <String, dynamic>{},
@@ -1731,7 +1970,11 @@ class _FakeRealtimeService implements RealtimeService {
   Future<void> dispose() => _events.close();
 
   @override
-  Future<void> subscribeConversation(String conversationId) async {}
+  Future<void> subscribeConversation(String conversationId) async {
+    if (_conversationSubscriptions.add(conversationId)) {
+      subscribedConversationIds.add(conversationId);
+    }
+  }
 
   @override
   Future<void> subscribeThread(String threadId) async {}

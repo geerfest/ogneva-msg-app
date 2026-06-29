@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:ogneva_msg_app/data/repositories/auth_repository.dart';
 import 'package:ogneva_msg_app/data/repositories/chat_repository.dart';
 import 'package:ogneva_msg_app/data/services/realtime_service.dart';
 import 'package:ogneva_msg_app/domain/models/message.dart';
@@ -24,6 +25,7 @@ class ThreadScreen extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (context) => ThreadViewModel(
         threadId: threadId,
+        authRepository: context.read<AuthRepository>(),
         chatRepository: context.read<ChatRepository>(),
         realtimeService: context.read<RealtimeService>(),
       )..load(),

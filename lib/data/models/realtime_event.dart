@@ -30,6 +30,67 @@ class RealtimeEvent {
   final Map<String, dynamic> data;
 }
 
+extension RealtimeEventRouting on RealtimeEvent {
+  static const _conversationListInvalidationTypes = {
+    'conversation.created',
+    'conversation.updated',
+    'conversation.member_added',
+    'conversation.member_updated',
+    'conversation.member_removed',
+    'conversation.archived',
+    'conversation.unarchived',
+    'conversation.status_updated',
+    'unread.changed',
+  };
+
+  static const _conversationDetailInvalidationTypes = {
+    'topic.created',
+    'conversation.member_added',
+    'conversation.member_updated',
+    'conversation.member_removed',
+    'conversation.archived',
+    'conversation.unarchived',
+    'conversation.status_updated',
+    'unread.changed',
+  };
+
+  static const _contactInvalidationTypes = {
+    'student_teacher_link.created',
+    'student_teacher_link.revoked',
+  };
+
+  bool get shouldReloadConversationList {
+    return _conversationListInvalidationTypes.contains(eventType);
+  }
+
+  bool get shouldRefreshContactDiscovery {
+    return _contactInvalidationTypes.contains(eventType);
+  }
+
+  bool shouldReloadConversationDetail(String conversationId) {
+    return _conversationDetailInvalidationTypes.contains(eventType) &&
+        affectsConversation(conversationId);
+  }
+
+  bool affectsConversation(String conversationId) {
+    if (channel == 'conv:$conversationId') {
+      return true;
+    }
+    if (data['conversation_id'] == conversationId) {
+      return true;
+    }
+    final message = data['message'];
+    return message is Map<String, dynamic> &&
+        message['conversation_id'] == conversationId;
+  }
+
+  bool isOwnTypingEvent(String? userId) {
+    return userId != null &&
+        (eventType == 'typing.started' || eventType == 'typing.stopped') &&
+        data['user_id'] == userId;
+  }
+}
+
 class RealtimeEventDeduplicator {
   RealtimeEventDeduplicator({this.maxSize = 300});
 

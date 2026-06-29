@@ -41,6 +41,7 @@ class ChatsViewModel extends ChangeNotifier {
   ChatsFilter _selectedFilter = ChatsFilter.all;
   List<Conversation> _conversations = const <Conversation>[];
   final Set<String> _busyConversationIds = <String>{};
+  final Set<String> _subscribedConversationIds = <String>{};
 
   bool get isLoading => _isLoading;
   bool get isLoadingMore => _isLoadingMore;
@@ -185,23 +186,16 @@ class ChatsViewModel extends ChangeNotifier {
   }
 
   void _handleRealtimeEvent(RealtimeEvent event) {
-    switch (event.eventType) {
-      case 'conversation.created':
-      case 'conversation.updated':
-      case 'conversation.member_added':
-      case 'conversation.member_updated':
-      case 'conversation.member_removed':
-      case 'conversation.archived':
-      case 'conversation.unarchived':
-      case 'conversation.status_updated':
-      case 'unread.changed':
-        unawaited(load());
+    if (event.shouldReloadConversationList) {
+      unawaited(load());
     }
   }
 
   void _subscribeConversations(List<Conversation> conversations) {
     for (final conversation in conversations) {
-      unawaited(_realtimeService.subscribeConversation(conversation.id));
+      if (_subscribedConversationIds.add(conversation.id)) {
+        unawaited(_realtimeService.subscribeConversation(conversation.id));
+      }
     }
   }
 

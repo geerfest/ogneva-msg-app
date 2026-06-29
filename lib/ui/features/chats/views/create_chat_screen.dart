@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ogneva_msg_app/data/repositories/auth_repository.dart';
 import 'package:ogneva_msg_app/data/repositories/chat_repository.dart';
+import 'package:ogneva_msg_app/data/services/realtime_service.dart';
 import 'package:ogneva_msg_app/domain/models/contact.dart';
 import 'package:ogneva_msg_app/ui/core/theme/app_colors.dart';
 import 'package:ogneva_msg_app/ui/core/widgets/app_surface.dart';
@@ -20,6 +21,7 @@ class CreateChatScreen extends StatelessWidget {
       create: (context) => CreateChatViewModel(
         authRepository: context.read<AuthRepository>(),
         chatRepository: context.read<ChatRepository>(),
+        realtimeService: context.read<RealtimeService>(),
       )..load(),
       child: const _CreateChatContent(),
     );

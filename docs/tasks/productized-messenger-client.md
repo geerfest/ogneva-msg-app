@@ -254,7 +254,7 @@ Verification notes:
 
 ## CL-6 - Realtime Invalidation and Contact Refresh
 
-Status: `pending`
+Status: `done`
 
 Scope:
 
@@ -268,15 +268,27 @@ Scope:
 
 Acceptance:
 
-- [ ] list-level events refresh chats without duplicate subscriptions;
-- [ ] chat-level member/status events refresh conversation detail;
-- [ ] link events invalidate contact caches or reload active contact screens;
-- [ ] realtime deduplication remains based on `event_id`;
-- [ ] tests cover new event routing decisions.
+- [x] list-level events refresh chats without duplicate subscriptions;
+- [x] chat-level member/status events refresh conversation detail;
+- [x] link events invalidate contact caches or reload active contact screens;
+- [x] realtime deduplication remains based on `event_id`;
+- [x] tests cover new event routing decisions.
 
 Verification notes:
 
-- Pending.
+- 2026-06-28: Started implementation after checking backend
+  PRODUCT_REQUIREMENTS/API/OpenAPI/REALTIME docs for productized realtime
+  invalidation events, contact refresh requirements, server-side `user:{id}`
+  subscriptions, and `event_id` deduplication.
+- 2026-06-28: Added shared realtime routing helpers, list-level subscription
+  guards, conversation-specific chat detail reloads, create-chat and
+  add-member contact refresh on student-teacher link events, stale contact
+  selection pruning, and thread-level own typing filtering. Added unit/widget
+  coverage for event routing, list reload deduplication, active contact refresh,
+  member-candidate refresh, conversation-specific detail reloads, and own typing.
+  Ran `dart format .`, `flutter analyze`, `flutter test`, and
+  `git diff --check`; all passed. Live iOS simulator product flow remains scoped
+  to CL-7.
 
 ## CL-7 - Live iOS Simulator Verification
 

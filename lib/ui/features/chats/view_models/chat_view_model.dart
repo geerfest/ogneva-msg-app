@@ -43,6 +43,8 @@ class ChatViewModel extends ChangeNotifier {
   bool _isLoadingOlderMessages = false;
   bool _isMutatingMessage = false;
   bool _isOpeningThread = false;
+  bool _hasLoadedMemberCandidates = false;
+  bool _reloadMemberCandidatesAfterLoading = false;
   String? _errorMessage;
   String? _typingLabel;
   Conversation? _conversation;
@@ -243,8 +245,10 @@ class ChatViewModel extends ChangeNotifier {
 
   Future<List<Contact>> loadMemberCandidates() async {
     if (_isLoadingMemberCandidates) {
+      _reloadMemberCandidatesAfterLoading = true;
       return memberCandidates;
     }
+    _hasLoadedMemberCandidates = true;
     _isLoadingMemberCandidates = true;
     _errorMessage = null;
     notifyListeners();
@@ -266,6 +270,10 @@ class ChatViewModel extends ChangeNotifier {
     } finally {
       _isLoadingMemberCandidates = false;
       notifyListeners();
+      if (_reloadMemberCandidatesAfterLoading) {
+        _reloadMemberCandidatesAfterLoading = false;
+        unawaited(loadMemberCandidates());
+      }
     }
   }
 
@@ -719,16 +727,26 @@ class ChatViewModel extends ChangeNotifier {
       case 'typing.stopped':
         _handleTypingEvent(event);
         return;
-      case 'topic.created':
-      case 'conversation.member_added':
-      case 'conversation.member_updated':
-      case 'conversation.member_removed':
-      case 'conversation.status_updated':
-        unawaited(load());
-        return;
-      case 'unread.changed':
-        unawaited(load());
-        return;
+    }
+    if (event.shouldRefreshContactDiscovery) {
+      _handleContactDiscoveryInvalidated();
+      return;
+    }
+    if (event.shouldReloadConversationDetail(_conversationId)) {
+      unawaited(load());
+    }
+  }
+
+  void _handleContactDiscoveryInvalidated() {
+    if (!_hasLoadedMemberCandidates) {
+      return;
+    }
+    _memberCandidates = const <Contact>[];
+    notifyListeners();
+    if (_isLoadingMemberCandidates) {
+      _reloadMemberCandidatesAfterLoading = true;
+    } else {
+      unawaited(loadMemberCandidates());
     }
   }
 
@@ -885,7 +903,7 @@ class ChatViewModel extends ChangeNotifier {
     if (event.data['topic_id'] != _selectedTopic?.id) {
       return;
     }
-    if (event.data['user_id'] == _authRepository.currentUser?.id) {
+    if (event.isOwnTypingEvent(currentUserId)) {
       return;
     }
     final displayName = event.data['display_name'] as String? ?? 'Участник';

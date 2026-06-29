@@ -12,10 +12,12 @@ import 'package:uuid/uuid.dart';
 class ThreadViewModel extends ChangeNotifier {
   ThreadViewModel({
     required String threadId,
+    required AuthRepository authRepository,
     required ChatRepository chatRepository,
     required RealtimeService realtimeService,
     Uuid? uuid,
   }) : _threadId = threadId,
+       _authRepository = authRepository,
        _chatRepository = chatRepository,
        _realtimeService = realtimeService,
        _uuid = uuid ?? const Uuid() {
@@ -23,6 +25,7 @@ class ThreadViewModel extends ChangeNotifier {
   }
 
   final String _threadId;
+  final AuthRepository _authRepository;
   final ChatRepository _chatRepository;
   final RealtimeService _realtimeService;
   final Uuid _uuid;
@@ -370,6 +373,9 @@ class ThreadViewModel extends ChangeNotifier {
 
   void _handleTypingEvent(RealtimeEvent event) {
     if (event.data['thread_id'] != _threadId) {
+      return;
+    }
+    if (event.isOwnTypingEvent(_authRepository.currentUser?.id)) {
       return;
     }
     final displayName = event.data['display_name'] as String? ?? 'Участник';

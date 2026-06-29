@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:ogneva_msg_app/data/models/realtime_event.dart';
 import 'package:ogneva_msg_app/data/repositories/auth_repository.dart';
 import 'package:ogneva_msg_app/data/repositories/chat_repository.dart';
 import 'package:ogneva_msg_app/data/services/messenger_api_client.dart';
+import 'package:ogneva_msg_app/data/services/realtime_service.dart';
 import 'package:ogneva_msg_app/domain/models/contact.dart';
 import 'package:ogneva_msg_app/domain/models/conversation.dart';
 
@@ -20,15 +24,20 @@ class CreateChatViewModel extends ChangeNotifier {
   CreateChatViewModel({
     required AuthRepository authRepository,
     required ChatRepository chatRepository,
+    required RealtimeService realtimeService,
   }) : _authRepository = authRepository,
-       _chatRepository = chatRepository;
+       _chatRepository = chatRepository {
+    _eventsSubscription = realtimeService.events.listen(_handleRealtimeEvent);
+  }
 
   final AuthRepository _authRepository;
   final ChatRepository _chatRepository;
+  late final StreamSubscription<RealtimeEvent> _eventsSubscription;
   final Set<String> _selectedContactIds = <String>{};
 
   bool _isLoading = false;
   bool _isCreating = false;
+  bool _reloadAfterLoading = false;
   String? _errorMessage;
   CreateChatMode? _selectedMode;
   List<Contact> _directContacts = const <Contact>[];
@@ -78,6 +87,7 @@ class CreateChatViewModel extends ChangeNotifier {
 
   Future<void> load() async {
     if (_isLoading) {
+      _reloadAfterLoading = true;
       return;
     }
     _isLoading = true;
@@ -101,6 +111,10 @@ class CreateChatViewModel extends ChangeNotifier {
     } finally {
       _isLoading = false;
       notifyListeners();
+      if (_reloadAfterLoading) {
+        _reloadAfterLoading = false;
+        unawaited(load());
+      }
     }
   }
 
@@ -221,5 +235,27 @@ class CreateChatViewModel extends ChangeNotifier {
       _selectedMode = modes.first;
       _selectedContactIds.clear();
     }
+    _pruneSelectedContacts();
+  }
+
+  void _pruneSelectedContacts() {
+    final visibleContactIds = contactsForSelectedMode
+        .map((contact) => contact.id)
+        .toSet();
+    _selectedContactIds.removeWhere(
+      (contactId) => !visibleContactIds.contains(contactId),
+    );
+  }
+
+  void _handleRealtimeEvent(RealtimeEvent event) {
+    if (event.shouldRefreshContactDiscovery) {
+      unawaited(load());
+    }
+  }
+
+  @override
+  void dispose() {
+    _eventsSubscription.cancel();
+    super.dispose();
   }
 }
